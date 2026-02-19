@@ -1,0 +1,28 @@
+# Core API
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+
+# HuggingFace — model inference
+transformers==4.38.2
+# CPU-only torch (saves ~1.5GB vs. CUDA build)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0+cpu
+torchaudio==2.2.0+cpu
+
+# Audio I/O
+soundfile==0.12.1
+scipy==1.12.0
+numpy==1.26.4
+
+# Optional: MP3 encoding (requires ffmpeg system package in Dockerfile)
+pydub==0.25.1
+
+# Utilities
+python-dotenv==1.0.0
+
+# Cloud Providers
+requests==2.31.0
+boto3==1.34.0
