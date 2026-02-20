@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class TTSRequest(BaseModel):
     """Text-to-Speech synthesis request."""
 
-    text: str = Field(..., min_length=1, max_length=1000)
+    text: str = Field(..., min_length=1, max_length=4000)
     language: str = Field(
         default="quz",
         description="ISO 639-1/3 language code (es, quz, en).",

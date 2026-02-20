@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     tts_language: str = "spa"
     tts_model_name: str = "facebook/mms-tts-spa"
     # Max input characters to prevent abuse / OOM
-    tts_max_chars: int = 1000
+    tts_max_chars: int = 4000
 
     # STT — Whisper
     stt_model_name: str = "openai/whisper-small"
