@@ -45,12 +45,16 @@ class ElevenLabsProvider(TTSProvider):
 
 class PollyProvider(TTSProvider):
     def __init__(self):
-        self.client = boto3.client(
-            "polly",
-            region_name=settings.aws_region,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key
-        )
+        client_kwargs = {
+            "service_name": "polly",
+            "region_name": settings.aws_region,
+        }
+        if settings.aws_access_key_id:
+            client_kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        if settings.aws_secret_access_key:
+            client_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+            
+        self.client = boto3.client(**client_kwargs)
 
     def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
         vid = voice_id or "Lupe" # Default Spanish voice
