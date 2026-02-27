@@ -70,7 +70,7 @@ class MmsTTSService:
             output = self._model(**inputs).waveform
         return output.squeeze().numpy()
 
-    async def synthesize(self, text: str, output_format: str = "wav") -> bytes:
+    async def synthesize(self, text: str, output_format: str = "wav", sample_rate_override: int | None = None) -> bytes:
         """
         Synthesize Quechua (or target language) text to audio bytes.
 
@@ -80,24 +80,26 @@ class MmsTTSService:
         audio_array = await loop.run_in_executor(
             None, self._synthesize_sync, text
         )
-        return self._encode(audio_array, output_format)
+        return self._encode(audio_array, output_format, sample_rate_override)
 
-    def _encode(self, audio: np.ndarray, fmt: str) -> bytes:
+    def _encode(self, audio: np.ndarray, fmt: str, sample_rate_override: int | None = None) -> bytes:
         """Encode float32 numpy waveform to audio bytes."""
         buf = io.BytesIO()
+        rate = sample_rate_override if sample_rate_override is not None else self.sample_rate
+        
         if fmt == "mp3":
             # Encode to WAV first then transcode — requires ffmpeg via pydub
             # Fallback: return WAV if ffmpeg not available
             try:
                 from pydub import AudioSegment  # type: ignore
                 wav_buf = io.BytesIO()
-                sf.write(wav_buf, audio, self.sample_rate, format="WAV", subtype="PCM_16")
+                sf.write(wav_buf, audio, rate, format="WAV", subtype="PCM_16")
                 wav_buf.seek(0)
                 seg = AudioSegment.from_wav(wav_buf)
                 seg.export(buf, format="mp3", bitrate="128k")
             except Exception:
                 logger.warning("MP3 encoding failed (pydub/ffmpeg missing), returning WAV")
-                sf.write(buf, audio, self.sample_rate, format="WAV", subtype="PCM_16")
+                sf.write(buf, audio, rate, format="WAV", subtype="PCM_16")
         else:
-            sf.write(buf, audio, self.sample_rate, format="WAV", subtype="PCM_16")
+            sf.write(buf, audio, rate, format="WAV", subtype="PCM_16")
         return buf.getvalue()

@@ -59,11 +59,16 @@ class PollyProvider(TTSProvider):
     def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
         vid = voice_id or "Lupe" # Default Spanish voice
         
+        text_type = "text"
+        if text.strip().startswith("<speak>"):
+            text_type = "ssml"
+
         response = self.client.synthesize_speech(
             Text=text,
             OutputFormat="mp3",
             VoiceId=vid,
-            Engine="neural"
+            Engine="neural",
+            TextType=text_type
         )
         
         if "AudioStream" in response:

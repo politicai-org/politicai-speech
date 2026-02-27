@@ -82,10 +82,56 @@ class WhisperSTTService:
     def _load_audio(audio_bytes: bytes) -> np.ndarray:
         """Load audio bytes and resample to 16kHz mono float32."""
         buf = io.BytesIO(audio_bytes)
+        
+        # Try to read directly with soundfile
         try:
             audio, sr = sf.read(buf, dtype="float32", always_2d=False)
-        except Exception:
-            raise ValueError("Unsupported audio format. Use WAV, FLAC, or OGG.")
+        except Exception as e:
+            # If soundfile fails (e.g., WebM format), try ffmpeg conversion
+            logger.info(f"Soundfile failed, attempting ffmpeg conversion: {e}")
+            try:
+                import subprocess
+                import tempfile
+                
+                # Write input to temp file
+                with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
+                    tmp_in.write(audio_bytes)
+                    tmp_in_path = tmp_in.name
+                
+                # Convert to WAV using ffmpeg
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
+                    tmp_out_path = tmp_out.name
+                
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", tmp_in_path,
+                        "-ar", "16000",  # 16kHz
+                        "-ac", "1",      # mono
+                        "-f", "wav",
+                        tmp_out_path
+                    ],
+                    capture_output=True,
+                    timeout=10
+                )
+                
+                if result.returncode != 0:
+                    raise ValueError(f"FFmpeg conversion failed: {result.stderr.decode()}")
+                
+                # Read converted WAV
+                with open(tmp_out_path, "rb") as f:
+                    wav_bytes = f.read()
+                
+                # Cleanup temp files
+                import os
+                os.unlink(tmp_in_path)
+                os.unlink(tmp_out_path)
+                
+                # Read with soundfile
+                audio, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
+                
+            except Exception as ffmpeg_error:
+                logger.error(f"FFmpeg conversion failed: {ffmpeg_error}")
+                raise ValueError("Unsupported audio format. WebM conversion failed.")
 
         # Convert stereo to mono
         if audio.ndim == 2:

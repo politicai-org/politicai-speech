@@ -132,6 +132,7 @@ async def text_to_speech(
 
     # 1. Determine Provider
     provider = request.provider.lower()
+    logger.info(f"TTS Request: text='{request.text[:20]}...', lang={request.language}, provider={provider}")
     
     # Auto-selection logic
     if provider == "auto":
@@ -153,8 +154,21 @@ async def text_to_speech(
         if provider == "mms":
             if _tts is None:
                  raise HTTPException(status_code=503, detail="MMS model not loaded")
+            
+            # Apply pitch shift (lower sample rate) to simulate Male voice for Quechua
+            # Default MMS voice is often female/neutral. 
+            # Lowering sample rate by ~15% makes it deeper (Male-like).
+            # 22050Hz -> ~18742Hz
+            # sample_rate_override = int(_tts.sample_rate * 0.75)
+            # REVERT: User requested natural voice, no robotic pitch shift
+            sample_rate_override = None
+            
             # MMS returns wav
-            audio_bytes = await _tts.synthesize(request.text, output_format=request.output_format)
+            audio_bytes = await _tts.synthesize(
+                request.text, 
+                output_format=request.output_format,
+                sample_rate_override=sample_rate_override
+            )
             content_type = "audio/wav" if request.output_format == "wav" else "audio/mpeg"
 
         elif provider == "elevenlabs":
@@ -202,7 +216,14 @@ async def text_to_speech_stream(
     if _tts is None:
         raise HTTPException(status_code=503, detail="TTS model not loaded")
 
-    audio_bytes = await _tts.synthesize(request.text, output_format=request.output_format)
+    # Apply pitch shift (lower sample rate) to simulate Male voice for Quechua
+    sample_rate_override = int(_tts.sample_rate * 0.85)
+    
+    audio_bytes = await _tts.synthesize(
+        request.text, 
+        output_format=request.output_format,
+        sample_rate_override=sample_rate_override
+    )
 
     async def _chunks():
         chunk_size = 8192
