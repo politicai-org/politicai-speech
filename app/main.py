@@ -19,7 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 from .config import get_settings
-from .models import HealthResponse, STTResponse, TTSRequest, TTSResponse
+from .models import (
+    HealthResponse,
+    STTResponse,
+    TTSRequest,
+    TTSResponse,
+    VoiceCloneRequest,
+    VoiceCloneResponse,
+)
 from .services.stt_service import WhisperSTTService
 from .services.tts_service import MmsTTSService
 
@@ -32,16 +39,17 @@ _tts: MmsTTSService | None = None
 _stt: WhisperSTTService | None = None
 
 
-from .services.providers import ElevenLabsProvider, PollyProvider
+from .services.providers import ElevenLabsProvider, MinimaxProvider, PollyProvider
 
 # ... (global providers)
 _elevenlabs: ElevenLabsProvider | None = None
 _polly: PollyProvider | None = None
+_minimax: MinimaxProvider | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models at startup, release at shutdown."""
-    global _tts, _stt, _elevenlabs, _polly
+    global _tts, _stt, _elevenlabs, _polly, _minimax
     logger.info("Loading speech models (this takes ~30s on first run)...")
 
     # Local models (heavy)
@@ -69,6 +77,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to init AWS Polly: {e}")
 
+    try:
+        if settings.minimax_api_key and settings.minimax_group_id:
+            _minimax = MinimaxProvider()
+            logger.info("MiniMax provider enabled (voice cloning)")
+    except Exception as e:
+        logger.warning(f"Failed to init MiniMax: {e}")
+
     logger.info("Speech models ready")
     yield
 
@@ -76,6 +91,7 @@ async def lifespan(app: FastAPI):
     _stt = None
     _elevenlabs = None
     _polly = None
+    _minimax = None
 
 
 app = FastAPI(
@@ -114,6 +130,74 @@ async def health() -> HealthResponse:
         tts_language=settings.tts_language,
     )
 
+
+async def _synthesize_with_provider(
+    text: str,
+    provider: str,
+    language: str,
+    output_format: str,
+    voice_id: str | None = None,
+    api_key: str | None = None,
+    sample_rate_override: int | None = None,
+) -> tuple[bytes, str]:
+    """
+    Shared synthesis logic between /tts and /tts/stream.
+    
+    Returns:
+        tuple[bytes, str]: (audio_bytes, content_type)
+    """
+    audio_bytes = None
+    content_type = "audio/mpeg"
+    
+    if provider == "mms":
+        if _tts is None:
+            raise HTTPException(status_code=503, detail="MMS model not loaded")
+        
+        audio_bytes = await _tts.synthesize(
+            text,
+            output_format=output_format,
+            sample_rate_override=sample_rate_override
+        )
+        content_type = "audio/wav" if output_format == "wav" else "audio/mpeg"
+    
+    elif provider == "elevenlabs":
+        if _elevenlabs is None:
+            if api_key:
+                _elevenlabs = ElevenLabsProvider()
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="ElevenLabs provider not configured globally and no key provided"
+                )
+        
+        audio_bytes = _elevenlabs.synthesize(text, voice_id=voice_id, api_key=api_key)
+        content_type = "audio/mpeg"
+    
+    elif provider == "polly":
+        if _polly is None:
+            raise HTTPException(status_code=503, detail="AWS Polly provider not configured")
+        audio_bytes = _polly.synthesize(text, voice_id=voice_id)
+        content_type = "audio/mpeg"
+    
+    elif provider == "minimax":
+        if _minimax is None:
+            if api_key:
+                _minimax = MinimaxProvider()
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="MiniMax provider not configured globally and no key provided"
+                )
+        
+        audio_bytes = _minimax.synthesize(text, voice_id=voice_id, api_key=api_key)
+        content_type = "audio/mpeg"
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+    
+    return audio_bytes, content_type
+
+
 @app.post("/tts", tags=["Text-to-Speech"])
 async def text_to_speech(
     request: TTSRequest,
@@ -146,50 +230,20 @@ async def text_to_speech(
         else:
             provider = "polly" # Fallback for other languages
 
-    # 2. Execute Synthesis
+    # 2. Execute Synthesis (using shared method)
     try:
-        audio_bytes = None
-        content_type = "audio/mpeg"
-
-        if provider == "mms":
-            if _tts is None:
-                 raise HTTPException(status_code=503, detail="MMS model not loaded")
-            
-            # Apply pitch shift (lower sample rate) to simulate Male voice for Quechua
-            # Default MMS voice is often female/neutral. 
-            # Lowering sample rate by ~15% makes it deeper (Male-like).
-            # 22050Hz -> ~18742Hz
-            # sample_rate_override = int(_tts.sample_rate * 0.75)
-            # REVERT: User requested natural voice, no robotic pitch shift
-            sample_rate_override = None
-            
-            # MMS returns wav
-            audio_bytes = await _tts.synthesize(
-                request.text, 
-                output_format=request.output_format,
-                sample_rate_override=sample_rate_override
-            )
-            content_type = "audio/wav" if request.output_format == "wav" else "audio/mpeg"
-
-        elif provider == "elevenlabs":
-            if _elevenlabs is None:
-                # Allow instantiation if per-request key is provided even if global key is missing
-                if request.api_key:
-                     _elevenlabs = ElevenLabsProvider()
-                else:
-                     raise HTTPException(status_code=503, detail="ElevenLabs provider not configured globally and no key provided")
-            
-            audio_bytes = _elevenlabs.synthesize(request.text, voice_id=request.voice_id, api_key=request.api_key)
-            content_type = "audio/mpeg"
-
-        elif provider == "polly":
-            if _polly is None:
-                raise HTTPException(status_code=503, detail="AWS Polly provider not configured")
-            audio_bytes = _polly.synthesize(request.text, voice_id=request.voice_id)
-            content_type = "audio/mpeg"
+        # Pitch shift disabled for natural voice (as requested by user)
+        sample_rate_override = None
         
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+        audio_bytes, content_type = await _synthesize_with_provider(
+            text=request.text,
+            provider=provider,
+            language=request.language,
+            output_format=request.output_format,
+            voice_id=request.voice_id,
+            api_key=request.api_key,
+            sample_rate_override=sample_rate_override,
+        )
 
         return Response(
             content=audio_bytes,
@@ -213,16 +267,31 @@ async def text_to_speech_stream(
     """
     _require_api_key(x_api_key)
 
-    if _tts is None:
-        raise HTTPException(status_code=503, detail="TTS model not loaded")
-
-    # Apply pitch shift (lower sample rate) to simulate Male voice for Quechua
-    sample_rate_override = int(_tts.sample_rate * 0.85)
+    # Determine provider (same auto-selection logic as /tts)
+    provider = request.provider.lower()
+    if provider == "auto":
+        if request.language == "quz" or request.language == "qu":
+            provider = "mms"
+        elif request.language.startswith("es"):
+            if _elevenlabs and settings.elevenlabs_api_key:
+                provider = "elevenlabs"
+            else:
+                provider = "polly"
+        else:
+            provider = "polly"
     
-    audio_bytes = await _tts.synthesize(
-        request.text, 
+    # Pitch shift disabled for natural voice (consistency with /tts)
+    sample_rate_override = None
+    
+    # Use shared synthesis logic
+    audio_bytes, content_type = await _synthesize_with_provider(
+        text=request.text,
+        provider=provider,
+        language=request.language,
         output_format=request.output_format,
-        sample_rate_override=sample_rate_override
+        voice_id=request.voice_id,
+        api_key=request.api_key,
+        sample_rate_override=sample_rate_override,
     )
 
     async def _chunks():
@@ -232,8 +301,8 @@ async def text_to_speech_stream(
 
     return StreamingResponse(
         _chunks(),
-        media_type="audio/wav",
-        headers={"Content-Disposition": "inline; filename=speech.wav"},
+        media_type=content_type,
+        headers={"Content-Disposition": "inline; filename=speech.audio"},
     )
 
 
@@ -267,3 +336,59 @@ async def speech_to_text(
         text=result["text"],
         language_detected=result.get("language_detected"),
     )
+
+
+@app.post("/voice/clone", response_model=VoiceCloneResponse, tags=["Voice-Cloning"])
+async def clone_voice(
+    audio: Annotated[UploadFile, File(description="Audio file for voice cloning (WAV, MP3, 10s-5min)")],
+    voice_name: Annotated[str, Form(description="Name for the cloned voice")],
+    api_key: Annotated[str | None, Form(description="Optional MiniMax API key override")] = None,
+    x_api_key: Annotated[str | None, Header()] = None,
+) -> VoiceCloneResponse:
+    """
+    Clone a voice using MiniMax API.
+    
+    Requires:
+    - Audio file: 10 seconds to 5 minutes, WAV or MP3
+    - Voice name: Descriptive name for the cloned voice
+    
+    Returns the voice_id that can be used for TTS synthesis.
+    """
+    _require_api_key(x_api_key)
+    
+    if _minimax is None:
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="MiniMax provider not configured and no API key provided"
+            )
+    
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+    
+    if len(audio_bytes) > 50 * 1024 * 1024:  # 50MB limit
+        raise HTTPException(status_code=400, detail="Audio file too large (max 50MB)")
+    
+    try:
+        if _minimax:
+            voice_id = _minimax.clone_voice(audio_bytes, voice_name, api_key=api_key)
+        else:
+            temp_provider = MinimaxProvider()
+            voice_id = temp_provider.clone_voice(audio_bytes, voice_name, api_key=api_key)
+        
+        logger.info(f"Successfully cloned voice: {voice_name} -> {voice_id}")
+        
+        return VoiceCloneResponse(
+            voice_id=voice_id,
+            voice_name=voice_name,
+            status="ready"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        logger.error(f"Voice cloning failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Unexpected error during voice cloning: {exc}")
+        raise HTTPException(status_code=500, detail="Voice cloning failed")

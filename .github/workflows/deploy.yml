@@ -1,17 +1,15 @@
-name: Deploy to Amazon ECS
+name: Deploy to Amazon EC2 (via SSM)
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: candidato-ai/orbe-speech
-  ECS_SERVICE: candidato-ai-orbe-speech
-  ECS_CLUSTER: candidato-ai-cluster
-  ECS_TASK_DEFINITION: candidato-ai-orbe-speech
-  CONTAINER_NAME: orbe-speech
+  PROJECT_DIR: "/home/ubuntu/app"
+  SECRET_NAME: "candidato-orbe-speech-deploy-key"
 
 permissions:
   id-token: write
@@ -19,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy
+    name: Deploy to EC2
     runs-on: ubuntu-latest
     environment: production
 
@@ -30,39 +28,79 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::971422696764:role/candidato-ai-github-actions
+          role-to-assume: arn:aws:iam::971422696764:role/candidato-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Deploy via AWS SSM
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          INSTANCE_ID="${{ secrets.ORBE_SPEECH_INSTANCE_ID }}"
+          
+          COMMAND="
+            # Configurar clave SSH desde Secrets Manager (Gestionado por IAM)
+            if [ ! -f /home/ubuntu/.ssh/id_rsa ]; then
+              echo 'Configuring SSH Key from Secrets Manager...'
+              sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
+              sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
+              aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
+              sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
+              sudo -u ubuntu ssh-keyscan github.com >> /home/ubuntu/.ssh/known_hosts
+            fi
 
-      - name: Download task definition
-        run: |
-          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query taskDefinition > task-definition.json
+            if [ ! -d ${{ env.PROJECT_DIR }} ]; then
+              sudo -u ubuntu mkdir -p ${{ env.PROJECT_DIR }}
+              # Clonar usando SSH
+              sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git ${{ env.PROJECT_DIR }}
+            fi
 
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
+            cd ${{ env.PROJECT_DIR }}
+            sudo -u ubuntu git fetch --all
+            sudo -u ubuntu git reset --hard origin/main
+            
+            # Construir localmente en la instancia (aprovechando la arquitectura nativa ARM64)
+            cd ${{ env.PROJECT_DIR }}/orbe-speech
+            sudo -u ubuntu docker compose up -d --build
+            sudo -u ubuntu docker image prune -f
+          "
 
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          PAYLOAD=$(jq -n --arg cmd "$COMMAND" --arg id "$INSTANCE_ID" '
+          {
+            "InstanceIds": [$id],
+            "DocumentName": "AWS-RunShellScript",
+            "Parameters": {
+              "commands": [$cmd]
+            }
+          }')
+
+          COMMAND_ID=$(aws ssm send-command \
+            --cli-input-json "$PAYLOAD" \
+            --region ${{ env.AWS_REGION }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Command ID: $COMMAND_ID"
+
+          STATUS="Pending"
+          while [[ "$STATUS" == "Pending" || "$STATUS" == "InProgress" || "$STATUS" == "Delayed" ]]; do
+            sleep 5
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+            echo "Status: $STATUS"
+          done
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query "StandardOutputContent" \
+            --output text
+
+          if [ "$STATUS" != "Success" ]; then
+            aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "StandardErrorContent" \
+              --output text
+            exit 1
+          fi

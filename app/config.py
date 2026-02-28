@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
 
+    # MiniMax TTS (Voice Cloning)
+    minimax_api_key: str | None = None
+    minimax_group_id: str | None = None
+    minimax_base_url: str = "https://api.minimax.chat/v1/text_to_speech"
+
     # CORS
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:8003", "http://orbe-api:8003"]

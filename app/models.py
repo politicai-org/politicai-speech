@@ -17,7 +17,7 @@ class TTSRequest(BaseModel):
     )
     provider: str = Field(
         default="auto",
-        description="TTS provider: 'auto', 'mms', 'elevenlabs', 'polly'.",
+        description="TTS provider: 'auto', 'mms', 'elevenlabs', 'polly', 'minimax'.",
     )
     voice_id: str | None = Field(
         default=None,
@@ -67,3 +67,21 @@ class HealthResponse(BaseModel):
     tts_model_loaded: bool
     stt_model_loaded: bool
     tts_language: str
+
+
+class VoiceCloneRequest(BaseModel):
+    """Voice cloning request for MiniMax."""
+    
+    voice_name: str = Field(..., min_length=1, max_length=100)
+    api_key: str | None = Field(
+        default=None,
+        description="Optional MiniMax API key override for BYOK scenarios.",
+    )
+
+
+class VoiceCloneResponse(BaseModel):
+    """Voice cloning result."""
+    
+    voice_id: str
+    voice_name: str
+    status: str = "ready"
