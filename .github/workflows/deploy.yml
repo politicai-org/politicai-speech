@@ -39,22 +39,34 @@ jobs:
           echo "Deploying to Instance: $INSTANCE_ID"
 
           COMMAND="
+            set -e
+            
+            echo '>>> Configuring SSH access...'
+            sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
+            sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
+            
+            # Recuperar la clave y asegurar que termine en una nueva línea
+            aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
+            sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
+            
+            # Probar conexión a GitHub
+            echo '>>> Testing GitHub connection...'
+            sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts 2>/dev/null || true
+            sudo -u ubuntu ssh -o StrictHostKeyChecking=no -T git@github.com || true
+
             if [ ! -d $PROJECT_DIR ]; then
-              echo '>>> Project directory not found. Cloning repository via SSH...'
-              sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git $PROJECT_DIR || exit 1
+              echo '>>> Cloning repository...'
+              sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git clone git@github.com:TectopiaPeru/candidato-ai-orbe-speech.git $PROJECT_DIR
             fi
 
-            cd $PROJECT_DIR || exit 1
+            cd $PROJECT_DIR
+            echo '>>> Updating code...'
+            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git fetch --all
+            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
 
-            echo '>>> Fetching latest changes...'
-            sudo -u ubuntu git fetch --all || exit 1
-            echo '>>> Resetting local changes...'
-            sudo -u ubuntu git reset --hard origin/main || exit 1
-
-            echo '>>> Rebuilding and restarting Docker containers...'
+            echo '>>> Rebuilding Docker containers...'
             cd $PROJECT_DIR/orbe-speech
-            sudo -u ubuntu docker compose up -d --build || exit 1
-            echo '>>> Pruning old images...'
+            sudo -u ubuntu docker compose up -d --build
             sudo -u ubuntu docker image prune -f
             echo '>>> Deployment complete!'
           "
