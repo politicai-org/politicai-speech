@@ -66,7 +66,7 @@ jobs:
 
             echo '>>> Rebuilding Docker containers...'
             cd $PROJECT_DIR
-            sudo -u ubuntu docker compose up -d --build
+            sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build
             sudo -u ubuntu docker image prune -f
             echo '>>> Deployment complete!'
           "

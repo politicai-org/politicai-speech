@@ -1,0 +1,24 @@
+services:
+  orbe-speech:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orbe_speech
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      - MODEL_PATH=/app/models
+      - TTS_LANGUAGE=quz
+      - TTS_MODEL_NAME=facebook/mms-tts-quz
+      - STT_MODEL_NAME=openai/whisper-small
+      - TTS_MAX_CHARS=1000
+      - API_KEY=${SPEECH_API_KEY}
+      - CORS_ORIGINS=["*"]
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s

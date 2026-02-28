@@ -1,0 +1,4 @@
+-r base.txt
+# Standard torch for local development (supports CUDA if available or standard CPU)
+torch
+torchaudio

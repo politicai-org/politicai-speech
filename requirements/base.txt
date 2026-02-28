@@ -7,9 +7,6 @@ python-multipart==0.0.6
 
 # HuggingFace — model inference
 transformers==4.38.2
-# CPU-only torch (saves ~1.5GB vs. CUDA build)
-torch==2.2.0+cpu
-torchaudio==2.2.0+cpu
 
 # Audio I/O
 soundfile==0.12.1
