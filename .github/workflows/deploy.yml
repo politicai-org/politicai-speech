@@ -36,6 +36,8 @@ jobs:
           INSTANCE_ID="${{ secrets.ORBE_SPEECH_INSTANCE_ID }}"
           
           COMMAND="
+            set -e # Detenerse si algo falla
+            
             # Configurar clave SSH desde Secrets Manager (Gestionado por IAM)
             if [ ! -f /home/ubuntu/.ssh/id_rsa ]; then
               echo 'Configuring SSH Key from Secrets Manager...'
@@ -43,23 +45,35 @@ jobs:
               sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
               aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
               sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
-              sudo -u ubuntu ssh-keyscan github.com >> /home/ubuntu/.ssh/known_hosts
+              # Evitar el prompt interactivo de GitHub host key
+              sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts
+            fi
+
+            # Limpiar si la carpeta existe pero está vacía o dañada
+            if [ -d ${{ env.PROJECT_DIR }} ] && [ ! -d ${{ env.PROJECT_DIR }}/.git ]; then
+              echo 'Cleaning empty or corrupted project directory...'
+              sudo rm -rf ${{ env.PROJECT_DIR }}
             fi
 
             if [ ! -d ${{ env.PROJECT_DIR }} ]; then
+              echo 'Cloning repository...'
               sudo -u ubuntu mkdir -p ${{ env.PROJECT_DIR }}
               # Clonar usando SSH
               sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git ${{ env.PROJECT_DIR }}
             fi
 
             cd ${{ env.PROJECT_DIR }}
+            echo 'Updating code...'
             sudo -u ubuntu git fetch --all
             sudo -u ubuntu git reset --hard origin/main
             
-            # Construir localmente en la instancia (aprovechando la arquitectura nativa ARM64)
+            # Construir localmente en la instancia
+            echo 'Building with Docker Compose...'
             cd ${{ env.PROJECT_DIR }}/orbe-speech
             sudo -u ubuntu docker compose up -d --build
             sudo -u ubuntu docker image prune -f
+            
+            echo 'Deployment successful!'
           "
 
           PAYLOAD=$(jq -n --arg cmd "$COMMAND" --arg id "$INSTANCE_ID" '
