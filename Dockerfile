@@ -6,6 +6,8 @@ WORKDIR /app
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
+    cmake \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -34,7 +36,7 @@ WhisperForConditionalGeneration.from_pretrained('${STT_MODEL}', cache_dir='/app/
 print('Models downloaded.')"
 
 # Stage 2: Runner
-FROM python:3.12-slim as runner
+FROM python:3.13-slim as runner
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
