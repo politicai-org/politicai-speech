@@ -65,8 +65,8 @@ jobs:
             sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
 
             # Ensure enough memory for build (Create 2GB swap if not exists)
-            if ! swapon --show | grep -q "/swapfile"; then
-              echo ">>> Creating 2GB swap file to prevent OOM during build..."
+            if ! swapon --show | grep -q '/swapfile'; then
+              echo '>>> Creating 2GB swap file to prevent OOM during build...'
               if [ ! -f /swapfile ]; then
                 sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
                 sudo chmod 600 /swapfile
