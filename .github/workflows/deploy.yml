@@ -65,7 +65,7 @@ jobs:
             sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
 
             echo '>>> Rebuilding Docker containers...'
-            cd $PROJECT_DIR/orbe-speech
+            cd $PROJECT_DIR
             sudo -u ubuntu docker compose up -d --build
             sudo -u ubuntu docker image prune -f
             echo '>>> Deployment complete!'
