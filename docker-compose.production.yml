@@ -23,8 +23,9 @@ services:
       retries: 3
       start_period: 120s
     networks:
-      - orbe_speech_network
+      - app_candidato_network
 
 networks:
-  orbe_speech_network:
-    driver: bridge
+  app_candidato_network:
+    external: true
+
