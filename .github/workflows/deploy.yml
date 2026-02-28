@@ -97,7 +97,7 @@ jobs:
           fi
           echo "Stage 1 Complete!"
 
-          # ETAPA 2: Preparar recursos (swap, cleanup)
+          # ETAPA 2: Preparar recursos (swap, cleanup, network)
           echo ">>> STAGE 2: Prepare Resources..."
           COMMAND_STAGE2="
             set -e
@@ -111,6 +111,9 @@ jobs:
               fi
               sudo swapon /swapfile
             fi
+
+            echo '=== Creating Docker network if not exists...'
+            docker network inspect app_candidato_network >/dev/null 2>&1 || docker network create app_candidato_network
 
             echo '=== Disk space before cleanup:'
             df -h | grep -E '(/dev/|Filesystem)'
