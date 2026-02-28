@@ -32,191 +32,113 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy via AWS SSM
-        timeout-minutes: 45
+        timeout-minutes: 15
         run: |
           INSTANCE_ID="${{ secrets.ORBE_SPEECH_INSTANCE_ID }}"
           PROJECT_DIR="${{ env.PROJECT_DIR }}"
 
           echo "Deploying to Instance: $INSTANCE_ID"
 
-          # ETAPA 1: Preparación (SSH, Git)
-          echo ">>> STAGE 1: Setup SSH and Git..."
-          COMMAND_STAGE1="
+          COMMAND="
             set -e
-            echo '=== Configuring SSH access...'
-            sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
-            sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
             
-            aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
-            sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
-            
-            echo '=== Adding GitHub to known hosts...'
-            sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts 2>/dev/null || true
-            
-            if [ ! -d $PROJECT_DIR ]; then
-              echo '=== Cloning repository...'
-              sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git clone git@github.com:TectopiaPeru/candidato-ai-orbe-speech.git $PROJECT_DIR
-            fi
-
-            cd $PROJECT_DIR
-            echo '=== Fetching latest code...'
-            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git fetch --all
-            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
-            echo 'STAGE1_COMPLETE'
-          "
-
-          PAYLOAD1=$(jq -n --arg cmd "$COMMAND_STAGE1" --arg id "$INSTANCE_ID" '{
-            "InstanceIds": [$id],
-            "DocumentName": "AWS-RunShellScript",
-            "Parameters": {"commands": [$cmd]},
-            "TimeoutSeconds": 300
-          }')
-
-          echo "Sending Stage 1 (Setup) Command..."
-          CMD_ID1=$(aws ssm send-command --cli-input-json "$PAYLOAD1" --region ${{ env.AWS_REGION }} --query "Command.CommandId" --output text)
-          echo "Command ID: $CMD_ID1"
-
-          sleep 2
-          STATUS1="Pending"
-          COUNTER=0
-          while [[ "$STATUS1" == "Pending" || "$STATUS1" == "InProgress" || "$STATUS1" == "Delayed" ]]; do
-            sleep 10
-            COUNTER=$((COUNTER + 1))
-            if [ $COUNTER -gt 30 ]; then
-              echo "ERROR: Stage 1 timeout after 5 minutes"
-              exit 1
-            fi
-            STATUS1=$(aws ssm get-command-invocation --command-id "$CMD_ID1" --instance-id "$INSTANCE_ID" --query "Status" --output text)
-            echo "Stage 1 Status: $STATUS1 (waited ${COUNTER}0s)"
-          done
-
-          if [ "$STATUS1" != "Success" ]; then
-            echo "Stage 1 Failed!"
-            aws ssm get-command-invocation --command-id "$CMD_ID1" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text
-            exit 1
-          fi
-          echo "Stage 1 Complete!"
-
-          # ETAPA 2: Preparar recursos (swap, cleanup, network)
-          echo ">>> STAGE 2: Prepare Resources..."
-          COMMAND_STAGE2="
-            set -e
-            # Create swap if needed
-            if ! swapon --show | grep -q '/swapfile'; then
-              echo '=== Creating 2GB swap file...'
-              if [ ! -f /swapfile ]; then
-                sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
-                sudo chmod 600 /swapfile
-                sudo mkswap /swapfile
-              fi
-              sudo swapon /swapfile
-            fi
-
-            echo '=== Creating Docker network if not exists...'
+            # 1. Create network if needed
+            echo '=== Checking Docker network...'
             docker network inspect app_candidato_network >/dev/null 2>&1 || docker network create app_candidato_network
-
-            echo '=== Disk space before cleanup:'
-            df -h | grep -E '(/dev/|Filesystem)'
             
-            echo '=== Cleaning Docker resources...'
+            # 2. Free up disk space aggressively
+            echo '=== Freeing disk space...'
             docker system prune -a -f --volumes 2>/dev/null || true
-            
-            echo '=== Disk space after cleanup:'
+            docker image prune -a -f 2>/dev/null || true
+            rm -rf /tmp/* 2>/dev/null || true
             df -h | grep -E '(/dev/|Filesystem)'
-            echo 'STAGE2_COMPLETE'
+            
+            # 3. Create project directory if needed
+            mkdir -p $PROJECT_DIR
+            cd $PROJECT_DIR
+            
+            # 4. Create minimal docker-compose (no build, just pull)
+            echo '=== Creating docker-compose...'
+            cat > docker-compose.yml << 'EOF'
+            services:
+              orbe-speech:
+                image: tectopia/candidato-orbe-speech:latest
+                container_name: candidato_orbe_speech
+                restart: unless-stopped
+                ports:
+                  - "8004:8004"
+                environment:
+                  - MODEL_PATH=/app/models
+                  - TTS_LANGUAGE=quz
+                  - TTS_MODEL_NAME=facebook/mms-tts-quz
+                  - STT_MODEL_NAME=openai/whisper-small
+                  - TTS_MAX_CHARS=1000
+                  - API_KEY=${SPEECH_API_KEY:-speech-dev-key-2024}
+                  - CORS_ORIGINS=[\"*\"]
+                  - LOG_LEVEL=INFO
+                healthcheck:
+                  test: [\"CMD\", \"python\", \"-c\", \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 120s
+                networks:
+                  - app_candidato_network
+            
+            networks:
+              app_candidato_network:
+                external: true
+            EOF
+            
+            # 5. Pull and start (NO BUILD - much faster!)
+            echo '=== Pulling image...'
+            docker pull tectopia/candidato-orbe-speech:latest || echo 'WARNING: Using local image'
+            
+            echo '=== Starting container...'
+            docker compose up -d --remove-orphans
+            
+            # 6. Clean up
+            docker image prune -f 2>/dev/null || true
+            
+            echo '=== Checking status...'
+            docker ps | grep orbe-speech || echo 'Container not running!'
+            echo 'DEPLOY_COMPLETE'
           "
 
-          PAYLOAD2=$(jq -n --arg cmd "$COMMAND_STAGE2" --arg id "$INSTANCE_ID" '{
+          PAYLOAD=$(jq -n --arg cmd "$COMMAND" --arg id "$INSTANCE_ID" '{
             "InstanceIds": [$id],
             "DocumentName": "AWS-RunShellScript",
             "Parameters": {"commands": [$cmd]},
-            "TimeoutSeconds": 300
+            "TimeoutSeconds": 900
           }')
 
-          echo "Sending Stage 2 (Resources) Command..."
-          CMD_ID2=$(aws ssm send-command --cli-input-json "$PAYLOAD2" --region ${{ env.AWS_REGION }} --query "Command.CommandId" --output text)
+          echo "Sending SSM Command..."
+          COMMAND_ID=$(aws ssm send-command --cli-input-json "$PAYLOAD" --region ${{ env.AWS_REGION }} --query "Command.CommandId" --output text)
+
+          echo "Command ID: $COMMAND_ID"
           
-          sleep 2
-          STATUS2="Pending"
+          STATUS="Pending"
           COUNTER=0
-          while [[ "$STATUS2" == "Pending" || "$STATUS2" == "InProgress" || "$STATUS2" == "Delayed" ]]; do
+          while [[ "$STATUS" == "Pending" || "$STATUS" == "InProgress" || "$STATUS" == "Delayed" ]]; do
             sleep 10
             COUNTER=$((COUNTER + 1))
-            if [ $COUNTER -gt 30 ]; then
-              echo "ERROR: Stage 2 timeout after 5 minutes"
+            if [ $COUNTER -gt 60 ]; then
+              echo "ERROR: Timeout after 10 minutes"
               exit 1
             fi
-            STATUS2=$(aws ssm get-command-invocation --command-id "$CMD_ID2" --instance-id "$INSTANCE_ID" --query "Status" --output text)
-            echo "Stage 2 Status: $STATUS2 (waited ${COUNTER}0s)"
-          done
-
-          if [ "$STATUS2" != "Success" ]; then
-            echo "Stage 2 Failed!"
-            aws ssm get-command-invocation --command-id "$CMD_ID2" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text
-            exit 1
-          fi
-          echo "Stage 2 Complete!"
-
-          # ETAPA 3: Docker Build y Deploy
-          echo ">>> STAGE 3: Docker Build and Deploy..."
-          COMMAND_STAGE3="
-            set -e
-            cd $PROJECT_DIR
-            echo '=== Starting Docker build at \$(date)...'
-            
-            # Build con output detallado pero sin sobrecargar
-            sudo -u ubuntu docker compose -f docker-compose.production.yml build --progress=plain 2>&1 | tee /tmp/docker-build.log | tail -100
-            
-            echo '=== Starting containers...'
-            sudo -u ubuntu docker compose -f docker-compose.production.yml up -d
-            
-            echo '=== Cleaning old images...'
-            docker image prune -f || true
-            
-            echo '=== Checking container status...'
-            docker ps | grep orbe-speech || true
-            echo 'STAGE3_COMPLETE at \$(date)'
-          "
-
-          PAYLOAD3=$(jq -n --arg cmd "$COMMAND_STAGE3" --arg id "$INSTANCE_ID" '{
-            "InstanceIds": [$id],
-            "DocumentName": "AWS-RunShellScript",
-            "Parameters": {"commands": [$cmd]},
-            "TimeoutSeconds": 1800
-          }')
-
-          echo "Sending Stage 3 (Deploy) Command..."
-          CMD_ID3=$(aws ssm send-command --cli-input-json "$PAYLOAD3" --region ${{ env.AWS_REGION }} --query "Command.CommandId" --output text)
-          echo "Command ID: $CMD_ID3"
-
-          sleep 5
-          STATUS3="Pending"
-          COUNTER=0
-          MAX_WAIT=180  # 30 minutos máximo
-          while [[ "$STATUS3" == "Pending" || "$STATUS3" == "InProgress" || "$STATUS3" == "Delayed" ]]; do
-            sleep 15
-            COUNTER=$((COUNTER + 1))
-            if [ $COUNTER -gt $MAX_WAIT ]; then
-              echo "ERROR: Stage 3 timeout after 45 minutes"
-              exit 1
-            fi
-            STATUS3=$(aws ssm get-command-invocation --command-id "$CMD_ID3" --instance-id "$INSTANCE_ID" --query "Status" --output text)
-            if [ $((COUNTER % 4)) -eq 0 ]; then
-              echo "Stage 3 Status: $STATUS3 (waited $((COUNTER * 15))s)"
-            fi
+            STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "Status" --output text)
+            echo "Status: $STATUS (waited ${COUNTER}0s)"
           done
 
           echo "========================================================"
-          echo "Stage 3 Output:"
-          aws ssm get-command-invocation --command-id "$CMD_ID3" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
 
-          if [ "$STATUS3" != "Success" ]; then
+          if [ "$STATUS" != "Success" ]; then
             echo "========================================================"
             echo "ERROR OUTPUT:"
-            aws ssm get-command-invocation --command-id "$CMD_ID3" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text
-            echo "Deploy Failed with status: $STATUS3"
+            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text
+            echo "Deploy Failed with status: $STATUS"
             exit 1
           fi
 
-          echo "========================================================"
-          echo "Deploy Success! All stages completed."
+          echo "Deploy Success!"
