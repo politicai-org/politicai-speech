@@ -39,9 +39,8 @@ jobs:
           echo "Deploying to Instance: $INSTANCE_ID"
 
           COMMAND="
-            if [ ! -d $PROJECT_DIR/.git ]; then
-              echo '>>> Project directory not found or not a git repo. Cleaning and cloning...'
-              sudo rm -rf $PROJECT_DIR
+            if [ ! -d $PROJECT_DIR ]; then
+              echo '>>> Project directory not found. Cloning repository via SSH...'
               sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git $PROJECT_DIR || exit 1
             fi
 
