@@ -76,8 +76,15 @@ jobs:
             fi
 
             # Clean up before building to free up space/memory
-            echo '>>> Cleaning up old Docker resources...'
-            sudo -u ubuntu docker system prune -f --volumes
+            echo '>>> Checking disk space before cleanup...'
+            df -h
+            
+            echo '>>> Aggressive cleanup of old Docker resources...'
+            # Remove all unused images, containers, networks and volumes
+            sudo -u ubuntu docker system prune -a -f --volumes
+            
+            echo '>>> Checking disk space after cleanup...'
+            df -h
 
             echo '>>> Rebuilding Docker containers...'
             cd $PROJECT_DIR
