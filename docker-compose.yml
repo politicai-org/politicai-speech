@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: orbe_speech
+    container_name: candidato_orbe_speech
     ports:
       - "8004:8004"
     environment:
