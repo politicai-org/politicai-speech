@@ -34,48 +34,33 @@ jobs:
       - name: Deploy via AWS SSM
         run: |
           INSTANCE_ID="${{ secrets.ORBE_SPEECH_INSTANCE_ID }}"
-          
+          PROJECT_DIR="${{ env.PROJECT_DIR }}"
+
+          echo "Deploying to Instance: $INSTANCE_ID"
+
           COMMAND="
-            set -e # Detenerse si algo falla
-            
-            # Configurar clave SSH desde Secrets Manager (Gestionado por IAM)
-            if [ ! -f /home/ubuntu/.ssh/id_rsa ]; then
-              echo 'Configuring SSH Key from Secrets Manager...'
-              sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
-              sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
-              aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
-              sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
-              # Evitar el prompt interactivo de GitHub host key
-              sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts
+            if [ ! -d $PROJECT_DIR/.git ]; then
+              echo '>>> Project directory not found or not a git repo. Cleaning and cloning...'
+              sudo rm -rf $PROJECT_DIR
+              sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git $PROJECT_DIR || exit 1
             fi
 
-            # Limpiar si la carpeta existe pero está vacía o dañada
-            if [ -d ${{ env.PROJECT_DIR }} ] && [ ! -d ${{ env.PROJECT_DIR }}/.git ]; then
-              echo 'Cleaning empty or corrupted project directory...'
-              sudo rm -rf ${{ env.PROJECT_DIR }}
-            fi
+            cd $PROJECT_DIR || exit 1
 
-            if [ ! -d ${{ env.PROJECT_DIR }} ]; then
-              echo 'Cloning repository...'
-              sudo -u ubuntu mkdir -p ${{ env.PROJECT_DIR }}
-              # Clonar usando SSH
-              sudo -u ubuntu git clone git@github.com:TectopiaPeru/colchado-nacion.git ${{ env.PROJECT_DIR }}
-            fi
+            echo '>>> Fetching latest changes...'
+            sudo -u ubuntu git fetch --all || exit 1
+            echo '>>> Resetting local changes...'
+            sudo -u ubuntu git reset --hard origin/main || exit 1
 
-            cd ${{ env.PROJECT_DIR }}
-            echo 'Updating code...'
-            sudo -u ubuntu git fetch --all
-            sudo -u ubuntu git reset --hard origin/main
-            
-            # Construir localmente en la instancia
-            echo 'Building with Docker Compose...'
-            cd ${{ env.PROJECT_DIR }}/orbe-speech
-            sudo -u ubuntu docker compose up -d --build
+            echo '>>> Rebuilding and restarting Docker containers...'
+            cd $PROJECT_DIR/orbe-speech
+            sudo -u ubuntu docker compose up -d --build || exit 1
+            echo '>>> Pruning old images...'
             sudo -u ubuntu docker image prune -f
-            
-            echo 'Deployment successful!'
+            echo '>>> Deployment complete!'
           "
 
+          # Usamos jq para escapar el comando JSON de forma segura
           PAYLOAD=$(jq -n --arg cmd "$COMMAND" --arg id "$INSTANCE_ID" '
           {
             "InstanceIds": [$id],
@@ -85,6 +70,7 @@ jobs:
             }
           }')
 
+          echo "Sending SSM Command..."
           COMMAND_ID=$(aws ssm send-command \
             --cli-input-json "$PAYLOAD" \
             --region ${{ env.AWS_REGION }} \
@@ -93,6 +79,8 @@ jobs:
 
           echo "Command ID: $COMMAND_ID"
 
+          # Wait for command execution
+          echo "Waiting for execution..."
           STATUS="Pending"
           while [[ "$STATUS" == "Pending" || "$STATUS" == "InProgress" || "$STATUS" == "Delayed" ]]; do
             sleep 5
@@ -104,6 +92,8 @@ jobs:
             echo "Status: $STATUS"
           done
 
+          # Get Output
+          echo "========================================================"
           aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$INSTANCE_ID" \
@@ -111,10 +101,15 @@ jobs:
             --output text
 
           if [ "$STATUS" != "Success" ]; then
+            echo "========================================================"
+            echo "ERROR OUTPUT:"
             aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
               --query "StandardErrorContent" \
               --output text
+            echo "Deploy Failed with status: $STATUS"
             exit 1
           fi
+
+          echo "Deploy Success!"
