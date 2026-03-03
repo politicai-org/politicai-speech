@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # MiniMax TTS (Voice Cloning)
     minimax_api_key: str | None = None
     minimax_group_id: str | None = None
-    minimax_base_url: str = "https://api.minimax.chat/v1/text_to_speech"
+    minimax_base_url: str = "https://api.minimax.io/v1/text_to_speech"
 
     # CORS
     cors_origins: list[str] = Field(

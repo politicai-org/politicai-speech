@@ -139,31 +139,68 @@ class MinimaxProvider(TTSProvider):
     
     def clone_voice(self, audio_bytes: bytes, voice_name: str, api_key: str | None = None) -> str:
         """
-        Clone a voice using MiniMax API.
-        Returns the cloned voice_id.
+        Clone a voice using MiniMax API via File Upload + Voice Clone workflow.
+        Returns the cloned voice_id (which is generated here and sent to API).
         """
         key = api_key or settings.minimax_api_key
         group_id = settings.minimax_group_id
         
         if not key or not group_id:
             raise ValueError("MiniMax API key and group ID must be configured")
-        
-        clone_url = "https://api.minimax.chat/v1/voice_clone"
-        headers = {
+            
+        # 1. Upload file first
+        upload_url = "https://api.minimax.io/v1/files/upload"
+        headers_upload = {
             "Authorization": f"Bearer {key}"
         }
         
-        import base64
-        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        # Use a generic filename but ensure extension matches content if possible
+        # Assuming MP3 or WAV. API usually detects header.
+        files = {
+            'file': (f'{voice_name}.mp3', audio_bytes, 'audio/mpeg'),
+            'purpose': (None, 'voice_clone')
+        }
+        
+        upload_resp = requests.post(upload_url, headers=headers_upload, files=files, timeout=60)
+        if upload_resp.status_code != 200:
+             raise RuntimeError(f"MiniMax upload error ({upload_resp.status_code}): {upload_resp.text}")
+        
+        upload_data = upload_resp.json()
+        if upload_data.get("base_resp", {}).get("status_code") != 0:
+             error_msg = upload_data.get("base_resp", {}).get("status_msg", "Unknown error")
+             raise RuntimeError(f"MiniMax upload API error: {error_msg}")
+             
+        file_id = upload_data.get("file", {}).get("file_id")
+        if not file_id:
+             raise RuntimeError("MiniMax upload response missing file_id")
+
+        # 2. Clone voice using file_id
+        clone_url = "https://api.minimax.io/v1/voice_clone"
+        headers_clone = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Generate valid voice_id: alphanumeric, start with letter, >=8 chars
+        import uuid
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9]', '', voice_name)
+        if not safe_name:
+            safe_name = "Voice"
+        # Ensure start with letter
+        if not safe_name[0].isalpha():
+            safe_name = "V" + safe_name
+            
+        # Append UUID to ensure uniqueness and length
+        generated_voice_id = f"{safe_name[:10]}{str(uuid.uuid4().hex)[:10]}"
         
         payload = {
             "group_id": group_id,
-            "voice_name": voice_name,
-            "audio": audio_base64,
-            "audio_format": "mp3"
+            "voice_id": generated_voice_id,
+            "file_id": file_id
         }
         
-        response = requests.post(clone_url, json=payload, headers=headers, timeout=60)
+        response = requests.post(clone_url, json=payload, headers=headers_clone, timeout=60)
         
         if response.status_code != 200:
             raise RuntimeError(f"MiniMax voice clone error ({response.status_code}): {response.text}")
@@ -174,8 +211,5 @@ class MinimaxProvider(TTSProvider):
             error_msg = result.get("base_resp", {}).get("status_msg", "Unknown error")
             raise RuntimeError(f"MiniMax clone API error: {error_msg}")
         
-        voice_id = result.get("data", {}).get("voice_id")
-        if not voice_id:
-            raise RuntimeError("MiniMax clone response missing voice_id")
-        
-        return voice_id
+        # If success, the voice_id we sent is now valid
+        return generated_voice_id
