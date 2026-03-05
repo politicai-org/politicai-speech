@@ -14,6 +14,8 @@ services:
       - STT_MODEL_NAME=openai/whisper-small
       - TTS_MAX_CHARS=1000
       - API_KEY=${SPEECH_API_KEY:-speech-dev-key-2024}
+      - ELEVENLABS_API_KEY=bbc453049576009dabfb2ad3bbc017207f3672fd36a17974af8296412dfd6cf9
+      - ELEVENLABS_VOICE_ID=KYje4wjxhegtDJdiNIgP
       - CORS_ORIGINS=["*"]
       - LOG_LEVEL=INFO
     healthcheck:
