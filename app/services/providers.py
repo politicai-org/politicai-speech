@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import io
+from typing import Iterator
 import requests
 import boto3
 from contextlib import closing
@@ -13,6 +14,11 @@ class TTSProvider(ABC):
     @abstractmethod
     def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
         pass
+
+    def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
+        """Default implementation: synthesize full audio and yield it in one chunk.
+        Override this for true streaming."""
+        yield self.synthesize(text, voice_id, api_key)
 
 class ElevenLabsProvider(TTSProvider):
     def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
@@ -44,6 +50,59 @@ class ElevenLabsProvider(TTSProvider):
             raise RuntimeError(f"ElevenLabs error: {response.text}")
             
         return response.content
+
+    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
+        """Async generator for streaming audio."""
+        vid = voice_id or settings.elevenlabs_voice_id
+        if not vid:
+            raise ValueError("voice_id is required for ElevenLabs TTS")
+        
+        key = api_key or settings.elevenlabs_api_key
+        if not key:
+            raise ValueError("ElevenLabs API key not configured")
+            
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}/stream"
+        
+        headers = {
+            "xi-api-key": key,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75
+            }
+        }
+        
+        # Try to use httpx for async streaming if available
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", url, json=data, headers=headers) as response:
+                    if response.status_code != 200:
+                        error_text = await response.read()
+                        raise RuntimeError(f"ElevenLabs stream error: {error_text.decode()}")
+                    
+                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                        if chunk:
+                            yield chunk
+            return
+        except ImportError:
+            pass
+            
+        # Fallback to requests (blocking, but works)
+        response = requests.post(url, json=data, headers=headers, stream=True)
+        
+        if response.status_code != 200:
+            error_text = response.text
+            raise RuntimeError(f"ElevenLabs stream error: {error_text}")
+            
+        for chunk in response.iter_content(chunk_size=1024):
+            if chunk:
+                yield chunk
+
 
 class PollyProvider(TTSProvider):
     def __init__(self):

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, AsyncGenerator
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -204,6 +204,53 @@ async def _synthesize_with_provider(
     return audio_bytes, content_type
 
 
+async def _stream_with_provider(
+    text: str,
+    provider: str,
+    language: str,
+    output_format: str,
+    voice_id: str | None = None,
+    api_key: str | None = None,
+    sample_rate_override: int | None = None,
+) -> AsyncGenerator[bytes, None]:
+    """
+    Streaming synthesis logic. Yields audio chunks.
+    """
+    if provider == "elevenlabs":
+        # Use local variable to avoid UnboundLocalError due to potential assignment
+        instance = _elevenlabs
+        if instance is None:
+            if api_key:
+                from .services.providers import ElevenLabsProvider
+                instance = ElevenLabsProvider()
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail="ElevenLabs provider not configured globally and no key provided"
+                )
+        
+        # Use the true streaming method
+        async for chunk in instance.synthesize_stream(text, voice_id=voice_id, api_key=api_key):
+            yield chunk
+            
+    else:
+        # Fallback to full synthesis for other providers (MMS, Polly, MiniMax)
+        # This simulates streaming by chunking the result
+        audio_bytes, _ = await _synthesize_with_provider(
+            text=text,
+            provider=provider,
+            language=language,
+            output_format=output_format,
+            voice_id=voice_id,
+            api_key=api_key,
+            sample_rate_override=sample_rate_override,
+        )
+        
+        chunk_size = 8192
+        for i in range(0, len(audio_bytes), chunk_size):
+            yield audio_bytes[i : i + chunk_size]
+
+
 @app.post("/tts", tags=["Text-to-Speech"])
 async def text_to_speech(
     request: TTSRequest,
@@ -289,24 +336,21 @@ async def text_to_speech_stream(
     # Pitch shift disabled for natural voice (consistency with /tts)
     sample_rate_override = None
     
-    # Use shared synthesis logic
-    audio_bytes, content_type = await _synthesize_with_provider(
-        text=request.text,
-        provider=provider,
-        language=request.language,
-        output_format=request.output_format,
-        voice_id=request.voice_id,
-        api_key=request.api_key,
-        sample_rate_override=sample_rate_override,
-    )
-
-    async def _chunks():
-        chunk_size = 8192
-        for i in range(0, len(audio_bytes), chunk_size):
-            yield audio_bytes[i : i + chunk_size]
+    # Determine content type
+    content_type = "audio/mpeg"
+    if provider == "mms" and request.output_format == "wav":
+        content_type = "audio/wav"
 
     return StreamingResponse(
-        _chunks(),
+        _stream_with_provider(
+            text=request.text,
+            provider=provider,
+            language=request.language,
+            output_format=request.output_format,
+            voice_id=request.voice_id,
+            api_key=request.api_key,
+            sample_rate_override=sample_rate_override,
+        ),
         media_type=content_type,
         headers={"Content-Disposition": "inline; filename=speech.audio"},
     )
