@@ -17,6 +17,8 @@ class TTSProvider(ABC):
 class ElevenLabsProvider(TTSProvider):
     def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
         vid = voice_id or settings.elevenlabs_voice_id
+        if not vid:
+            raise ValueError("voice_id is required for ElevenLabs TTS")
         
         # Use provided key or global fallback
         key = api_key or settings.elevenlabs_api_key
