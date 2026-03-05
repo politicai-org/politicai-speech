@@ -161,16 +161,19 @@ async def _synthesize_with_provider(
         content_type = "audio/wav" if output_format == "wav" else "audio/mpeg"
     
     elif provider == "elevenlabs":
-        if _elevenlabs is None:
+        # Use local variable to avoid UnboundLocalError due to potential assignment
+        instance = _elevenlabs
+        if instance is None:
             if api_key:
-                _elevenlabs = ElevenLabsProvider()
+                from .services.providers import ElevenLabsProvider
+                instance = ElevenLabsProvider()
             else:
                 raise HTTPException(
                     status_code=503,
                     detail="ElevenLabs provider not configured globally and no key provided"
                 )
         
-        audio_bytes = _elevenlabs.synthesize(text, voice_id=voice_id, api_key=api_key)
+        audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
         content_type = "audio/mpeg"
     
     elif provider == "polly":
@@ -180,16 +183,19 @@ async def _synthesize_with_provider(
         content_type = "audio/mpeg"
     
     elif provider == "minimax":
-        if _minimax is None:
+        # Use local variable to avoid UnboundLocalError due to potential assignment
+        instance = _minimax
+        if instance is None:
             if api_key:
-                _minimax = MinimaxProvider()
+                from .services.providers import MinimaxProvider
+                instance = MinimaxProvider()
             else:
                 raise HTTPException(
                     status_code=503,
                     detail="MiniMax provider not configured globally and no key provided"
                 )
         
-        audio_bytes = _minimax.synthesize(text, voice_id=voice_id, api_key=api_key)
+        audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
         content_type = "audio/mpeg"
     
     else:
