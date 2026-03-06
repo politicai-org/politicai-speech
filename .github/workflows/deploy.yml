@@ -57,47 +57,15 @@ jobs:
             mkdir -p $PROJECT_DIR
             cd $PROJECT_DIR
             
-            # 4. Create minimal docker-compose (no build, just pull)
-            echo '=== Creating docker-compose...'
-            cat > docker-compose.yml << 'EOF'
-            services:
-              orbe-speech:
-                image: tectopia/candidato-orbe-speech:latest
-                container_name: candidato_orbe_speech
-                restart: unless-stopped
-                ports:
-                  - "8004:8004"
-                environment:
-                  - MODEL_PATH=/app/models
-                  - TTS_LANGUAGE=quz
-                  - TTS_MODEL_NAME=facebook/mms-tts-quz
-                  - STT_MODEL_NAME=openai/whisper-small
-                  - TTS_MAX_CHARS=1000
-                  - API_KEY=${SPEECH_API_KEY:-speech-dev-key-2024}
-                  - ELEVENLABS_API_KEY=bbc453049576009dabfb2ad3bbc017207f3672fd36a17974af8296412dfd6cf9
-                  - ELEVENLABS_VOICE_ID=KYje4wjxhegtDJdiNIgP
-                  - CORS_ORIGINS=[\"*\"]
-                  - LOG_LEVEL=INFO
-                healthcheck:
-                  test: [\"CMD\", \"python\", \"-c\", \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\"]
-                  interval: 30s
-                  timeout: 10s
-                  retries: 3
-                  start_period: 120s
-                networks:
-                  - app_candidato_network
+            # 4. Update code
+            echo '=== Pulling latest code...'
+            git config --global --add safe.directory $PROJECT_DIR
+            git fetch origin
+            git reset --hard origin/main
             
-            networks:
-              app_candidato_network:
-                external: true
-            EOF
-            
-            # 5. Pull and start (NO BUILD - much faster!)
-            echo '=== Pulling image...'
-            docker pull tectopia/candidato-orbe-speech:latest || echo 'WARNING: Using local image'
-            
-            echo '=== Starting container...'
-            docker compose up -d --remove-orphans
+            # 5. Build and start (Build on server)
+            echo '=== Building and starting container...'
+            docker compose -f docker-compose.production.yml up -d --build --remove-orphans
             
             # 6. Clean up
             docker image prune -f 2>/dev/null || true
