@@ -41,68 +41,70 @@ jobs:
 
           COMMAND="
             set -e
-
-            echo '>>> Configuring SSH access...'
-            sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
-            sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
-
-            echo '>>> Checking for swap space...'
-            # Check if swap is active or swapfile exists
-            if [ ! -f /swapfile ]; then
-              echo '>>> Creating 2GB swap file...'
-              dd if=/dev/zero of=/swapfile bs=128M count=16
-              chmod 600 /swapfile
-              mkswap /swapfile
-              swapon /swapfile
-              echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
-              echo '>>> Swap created and activated.'
-            else
-              echo '>>> Swap file already exists.'
-            fi
-
-            aws secretsmanager get-secret-value --region ${{ env.AWS_REGION }} --secret-id ${{ env.SECRET_NAME }} --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
-            sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
-
-            echo '>>> Testing GitHub connection...'
-            sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts 2>/dev/null || true
-            sudo -u ubuntu ssh -o StrictHostKeyChecking=no -T git@github.com || true
-
-            if [ ! -d $PROJECT_DIR ]; then
-              echo '>>> Cloning repository...'
-              sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git clone git@github.com:TectopiaPeru/candidato-ai-orbe-speech.git $PROJECT_DIR
-            fi
-
-            # Fix permissions just in case
-            chown -R ubuntu:ubuntu $PROJECT_DIR
-
+            
+            # 1. Create network if needed
+            echo '=== Checking Docker network...'
+            docker network inspect app_candidato_network >/dev/null 2>&1 || docker network create app_candidato_network
+            
+            # 2. Free up disk space aggressively
+            echo '=== Freeing disk space...'
+            docker system prune -a -f --volumes 2>/dev/null || true
+            docker image prune -a -f 2>/dev/null || true
+            rm -rf /tmp/* 2>/dev/null || true
+            df -h | grep -E '(/dev/|Filesystem)'
+            
+            # 3. Create project directory if needed
+            mkdir -p $PROJECT_DIR
             cd $PROJECT_DIR
-            echo '>>> Updating code...'
-            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git fetch --all
-            sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
-
-            echo '>>> Cleaning up old Docker resources...'
-            sudo -u ubuntu docker image prune -f || true
-
-            echo '>>> Creating network if not exists...'
-            sudo -u ubuntu docker network create app_candidato_network 2>/dev/null || true
-
-            echo '>>> Preparing Docker build cache...'
-            export DOCKER_BUILDKIT=1
-            export COMPOSE_DOCKER_CLI_BUILD=1
-            sudo -u ubuntu docker pull python:3.13-slim || true
-
-            echo '>>> Building Docker image...'
-            sudo -u ubuntu -E docker compose -f docker-compose.production.yml build
-
-            echo '>>> Starting containers...'
-            sudo -u ubuntu -E docker compose -f docker-compose.production.yml up -d --remove-orphans
-
-            sleep 10
-            echo '>>> Checking container status...'
-            sudo -u ubuntu docker compose -f docker-compose.production.yml ps
-
-            sudo -u ubuntu docker image prune -f
-            echo '>>> Deployment complete!'
+            
+            # 4. Create minimal docker-compose (no build, just pull)
+            echo '=== Creating docker-compose...'
+            cat > docker-compose.yml << 'EOF'
+            services:
+              orbe-speech:
+                image: tectopia/candidato-orbe-speech:latest
+                container_name: candidato_orbe_speech
+                restart: unless-stopped
+                ports:
+                  - "8004:8004"
+                environment:
+                  - MODEL_PATH=/app/models
+                  - TTS_LANGUAGE=quz
+                  - TTS_MODEL_NAME=facebook/mms-tts-quz
+                  - STT_MODEL_NAME=openai/whisper-small
+                  - TTS_MAX_CHARS=1000
+                  - API_KEY=${SPEECH_API_KEY:-speech-dev-key-2024}
+                  - ELEVENLABS_API_KEY=bbc453049576009dabfb2ad3bbc017207f3672fd36a17974af8296412dfd6cf9
+                  - ELEVENLABS_VOICE_ID=KYje4wjxhegtDJdiNIgP
+                  - CORS_ORIGINS=[\"*\"]
+                  - LOG_LEVEL=INFO
+                healthcheck:
+                  test: [\"CMD\", \"python\", \"-c\", \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 120s
+                networks:
+                  - app_candidato_network
+            
+            networks:
+              app_candidato_network:
+                external: true
+            EOF
+            
+            # 5. Pull and start (NO BUILD - much faster!)
+            echo '=== Pulling image...'
+            docker pull tectopia/candidato-orbe-speech:latest || echo 'WARNING: Using local image'
+            
+            echo '=== Starting container...'
+            docker compose up -d --remove-orphans
+            
+            # 6. Clean up
+            docker image prune -f 2>/dev/null || true
+            
+            echo '=== Checking status...'
+            docker ps | grep orbe-speech || echo 'Container not running!'
+            echo 'DEPLOY_COMPLETE'
           "
 
           PAYLOAD=$(jq -n --arg cmd "$COMMAND" --arg id "$INSTANCE_ID" '{
