@@ -2,3 +2,5 @@
 # CPU-only torch for production (standard PyPI wheels for arm64)
 torch>=2.5.1
 torchaudio>=2.5.1
+# Ensure pydub is installed explicitly
+pydub>=0.25.1

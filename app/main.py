@@ -123,11 +123,22 @@ def _require_api_key(x_api_key: str | None) -> None:
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health() -> HealthResponse:
+    import shutil
+    ffmpeg_path = shutil.which("ffmpeg")
+    pydub_ok = False
+    try:
+        import pydub
+        pydub_ok = True
+    except ImportError:
+        pass
+
     return HealthResponse(
         status="ok",
         tts_model_loaded=_tts is not None,
         stt_model_loaded=_stt is not None,
         tts_language=settings.tts_language,
+        ffmpeg_available=ffmpeg_path is not None,
+        pydub_available=pydub_ok,
     )
 
 

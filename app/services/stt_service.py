@@ -115,8 +115,8 @@ class WhisperSTTService:
                 
                 sr = _TARGET_SAMPLE_RATE
                 
-            except ImportError:
-                logger.warning("pydub not available, falling back to subprocess ffmpeg")
+            except ImportError as e:
+                logger.warning(f"pydub not available: {e}, falling back to subprocess ffmpeg")
                 # Fallback to old method if pydub not installed
                 try:
                     import subprocess

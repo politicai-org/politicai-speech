@@ -63,10 +63,14 @@ class STTResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Health check response."""
+
     status: str
     tts_model_loaded: bool
     stt_model_loaded: bool
     tts_language: str
+    ffmpeg_available: bool = False
+    pydub_available: bool = False
 
 
 class VoiceCloneRequest(BaseModel):
