@@ -59,6 +59,7 @@ jobs:
             
             # 4. Update code
             echo '=== Pulling latest code...'
+            export HOME=/home/ubuntu
             git config --global --add safe.directory $PROJECT_DIR
             git fetch origin
             git reset --hard origin/main
