@@ -81,9 +81,6 @@ class WhisperSTTService:
     @staticmethod
     def _load_audio(audio_bytes: bytes) -> np.ndarray:
         """Load audio bytes and resample to 16kHz mono float32."""
-        if not audio_bytes or len(audio_bytes) < 256:
-            raise ValueError("Unsupported audio format. Empty or incomplete audio payload.")
-
         buf = io.BytesIO(audio_bytes)
         
         # Try to read directly with soundfile
@@ -96,8 +93,11 @@ class WhisperSTTService:
             try:
                 from pydub import AudioSegment
                 
-                # Load audio in memory with autodetection (supports webm, mp4, ogg, wav, mp3, etc.)
-                audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+                # Load audio in memory (supports webm, mp3, ogg, etc.)
+                audio_segment = AudioSegment.from_file(
+                    io.BytesIO(audio_bytes),
+                    format="webm"  # Auto-detect if None
+                )
                 
                 # Convert to 16kHz mono
                 audio_segment = audio_segment.set_frame_rate(_TARGET_SAMPLE_RATE).set_channels(1)

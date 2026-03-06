@@ -1,6 +1,8 @@
 services:
   orbe-speech:
-    image: ${IMAGE_URI}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: candidato_orbe_speech
     restart: unless-stopped
     ports:

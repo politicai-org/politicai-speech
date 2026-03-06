@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import io
-from typing import AsyncIterator, Iterator
+from typing import Iterator
 import requests
 import boto3
 from contextlib import closing
@@ -15,8 +15,8 @@ class TTSProvider(ABC):
     def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
         pass
 
-    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> AsyncIterator[bytes]:
-        """Default async implementation: synthesize full audio and yield it in one chunk.
+    def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
+        """Default implementation: synthesize full audio and yield it in one chunk.
         Override this for true streaming."""
         yield self.synthesize(text, voice_id, api_key)
 
@@ -51,7 +51,7 @@ class ElevenLabsProvider(TTSProvider):
             
         return response.content
 
-    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> AsyncIterator[bytes]:
+    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
         """Async generator for streaming audio."""
         vid = voice_id or settings.elevenlabs_voice_id
         if not vid:
@@ -91,20 +91,13 @@ class ElevenLabsProvider(TTSProvider):
             return
         except ImportError:
             pass
-        except Exception:
-            fallback_audio = self.synthesize(text, voice_id=vid, api_key=key)
-            for i in range(0, len(fallback_audio), 1024):
-                yield fallback_audio[i : i + 1024]
-            return
             
         # Fallback to requests (blocking, but works)
         response = requests.post(url, json=data, headers=headers, stream=True)
         
         if response.status_code != 200:
-            fallback_audio = self.synthesize(text, voice_id=vid, api_key=key)
-            for i in range(0, len(fallback_audio), 1024):
-                yield fallback_audio[i : i + 1024]
-            return
+            error_text = response.text
+            raise RuntimeError(f"ElevenLabs stream error: {error_text}")
             
         for chunk in response.iter_content(chunk_size=1024):
             if chunk:
