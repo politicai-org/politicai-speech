@@ -146,6 +146,8 @@ async def _synthesize_with_provider(
     Returns:
         tuple[bytes, str]: (audio_bytes, content_type)
     """
+    global _elevenlabs, _minimax, _polly, _tts
+
     audio_bytes = None
     content_type = "audio/mpeg"
     
@@ -216,6 +218,8 @@ async def _stream_with_provider(
     """
     Streaming synthesis logic. Yields audio chunks.
     """
+    global _elevenlabs, _minimax, _polly, _tts
+    
     if provider == "elevenlabs":
         # Use local variable to avoid UnboundLocalError due to potential assignment
         instance = _elevenlabs
