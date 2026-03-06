@@ -72,6 +72,9 @@ jobs:
               sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git clone git@github.com:TectopiaPeru/candidato-ai-orbe-speech.git $PROJECT_DIR
             fi
 
+            # Fix permissions just in case
+            chown -R ubuntu:ubuntu $PROJECT_DIR
+
             cd $PROJECT_DIR
             echo '>>> Updating code...'
             sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git fetch --all
