@@ -64,13 +64,21 @@ jobs:
             sudo -u ubuntu GIT_SSH_COMMAND='ssh -i /home/ubuntu/.ssh/id_rsa -o StrictHostKeyChecking=no' git reset --hard origin/main
 
             echo '>>> Cleaning up old Docker resources...'
-            sudo -u ubuntu docker system prune -f --volumes
+            sudo -u ubuntu docker image prune -f || true
 
             echo '>>> Creating network if not exists...'
             sudo -u ubuntu docker network create app_candidato_network 2>/dev/null || true
 
-            echo '>>> Rebuilding Docker containers...'
-            sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
+            echo '>>> Preparing Docker build cache...'
+            export DOCKER_BUILDKIT=1
+            export COMPOSE_DOCKER_CLI_BUILD=1
+            sudo -u ubuntu docker pull python:3.13-slim || true
+
+            echo '>>> Building Docker image...'
+            sudo -u ubuntu -E docker compose -f docker-compose.production.yml build
+
+            echo '>>> Starting containers...'
+            sudo -u ubuntu -E docker compose -f docker-compose.production.yml up -d --remove-orphans
 
             sleep 10
             echo '>>> Checking container status...'
