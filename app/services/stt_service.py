@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 
 import numpy as np
 import soundfile as sf
@@ -33,11 +34,21 @@ class WhisperSTTService:
 
     def __init__(self, model_name: str, model_path: str) -> None:
         logger.info(f"Loading Whisper STT model: {model_name}")
+        
+        # Use cache directories from environment (with fallbacks)
+        cache_dir = os.environ.get("TRANSFORMERS_CACHE", f"{model_path}/hub")
+        hf_home = os.environ.get("HF_HOME", model_path)
+        
+        logger.info(f"Using cache_dir: {cache_dir}")
+        logger.info(f"Using HF_HOME: {hf_home}")
+        
         self._pipe = pipeline(
             task="automatic-speech-recognition",
             model=model_name,
             chunk_length_s=30,
             device="cpu",
+            cache_dir=cache_dir,
+            model_kwargs={"cache_dir": cache_dir},
         )
         logger.info(f"Whisper STT model loaded: {model_name}")
 

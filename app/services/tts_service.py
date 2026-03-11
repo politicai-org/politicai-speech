@@ -46,14 +46,21 @@ class MmsTTSService:
         self._model_name = model_name
         self._model_path = os.path.join(model_path, model_name.replace("/", "--"))
 
+        # Use cache directories from environment (with fallbacks)
+        cache_dir = os.environ.get("TRANSFORMERS_CACHE", model_path)
+        hf_home = os.environ.get("HF_HOME", model_path)
+        
         logger.info(f"Loading MMS TTS model: {model_name} (language={language})")
+        logger.info(f"Using cache_dir: {cache_dir}")
+        logger.info(f"Using HF_HOME: {hf_home}")
+        
         self._tokenizer = AutoTokenizer.from_pretrained(
             model_name,
-            cache_dir=model_path,
+            cache_dir=cache_dir,
         )
         self._model = VitsModel.from_pretrained(
             model_name,
-            cache_dir=model_path,
+            cache_dir=cache_dir,
         )
         self._model.eval()
         logger.info(f"MMS TTS model loaded: {model_name}")

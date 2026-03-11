@@ -9,9 +9,9 @@ services:
       - "8004:8004"
     environment:
       - MODEL_PATH=/app/models
-      - HF_HOME=/app/models
-      - TRANSFORMERS_CACHE=/app/models/hub
-      - HUGGINGFACE_HUB_CACHE=/app/models/hub
+      - HF_HOME=/tmp/hf-cache/home
+      - TRANSFORMERS_CACHE=/tmp/hf-cache/hub
+      - HUGGINGFACE_HUB_CACHE=/tmp/hf-cache/hub
       - TTS_LANGUAGE=quz
       - TTS_MODEL_NAME=facebook/mms-tts-quz
       - STT_MODEL_NAME=openai/whisper-small

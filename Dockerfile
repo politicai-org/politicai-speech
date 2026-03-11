@@ -66,7 +66,11 @@ COPY app/ ./app/
 RUN addgroup --system speech && \
     adduser --system --group --home /app speech && \
     mkdir -p /app/models/hub && \
-    chown -R speech:speech $APP_HOME
+    mkdir -p /tmp/hf-cache/home && \
+    mkdir -p /tmp/hf-cache/hub && \
+    chown -R speech:speech $APP_HOME && \
+    chown -R speech:speech /app/models && \
+    chown -R speech:speech /tmp/hf-cache
 
 USER speech
 
