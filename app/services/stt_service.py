@@ -104,10 +104,7 @@ class WhisperSTTService:
                 from pydub import AudioSegment
                 
                 # Load audio in memory (supports webm, mp3, ogg, etc.)
-                audio_segment = AudioSegment.from_file(
-                    io.BytesIO(audio_bytes),
-                    format="webm"  # Auto-detect if None
-                )
+                audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
                 
                 # Convert to 16kHz mono
                 audio_segment = audio_segment.set_frame_rate(_TARGET_SAMPLE_RATE).set_channels(1)
@@ -132,7 +129,7 @@ class WhisperSTTService:
                     import subprocess
                     import tempfile
                     
-                    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
+                    with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp_in:
                         tmp_in.write(audio_bytes)
                         tmp_in_path = tmp_in.name
                     
