@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Expected sample rate for audio input
     stt_sample_rate: int = 16000
 
+    # Optimized for low latency voice calls
+    stt_partial_min_seconds: float = Field(default=0.8)  # Faster first partial
+    stt_partial_interval_seconds: float = Field(default=1.0)  # More frequent updates
+    stt_partial_window_seconds: float = Field(default=3.0)  # Smaller context window
+
     # Security — simple shared-secret API key (same pattern as orbe)
     api_key: str = Field(default="speech-dev-key-2024")
 

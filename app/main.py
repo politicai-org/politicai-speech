@@ -10,6 +10,7 @@ All CPU inference runs in a thread executor — the event loop is never blocked.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import importlib.util
 import os
@@ -17,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, AsyncGenerator
 
+import grpc
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -31,6 +33,8 @@ from .models import (
 from .services.providers import ElevenLabsProvider, MinimaxProvider, PollyProvider
 from .services.stt_service import WhisperSTTService
 from .services.tts_service import MmsTTSService
+from .orbe_speech_pb2 import AudioChunk, SynthesizeRequest, TranscriptEvent, TranscribeResponse
+from .orbe_speech_pb2_grpc import SpeechServiceServicer, add_SpeechServiceServicer_to_server
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -44,11 +48,159 @@ _stt: WhisperSTTService | None = None
 _elevenlabs: ElevenLabsProvider | None = None
 _polly: PollyProvider | None = None
 _minimax: MinimaxProvider | None = None
+_grpc_server: grpc.aio.Server | None = None
+
+
+def _require_grpc_api_key(context: grpc.aio.ServicerContext) -> None:
+    api_key = ""
+    for k, v in context.invocation_metadata():
+        if str(k).lower() == "x-api-key":
+            api_key = v
+            break
+    if api_key != settings.api_key:
+        context.abort(grpc.StatusCode.PERMISSION_DENIED, "Invalid or missing X-API-Key")
+
+
+class _GrpcSpeechService(SpeechServiceServicer):
+    async def Transcribe(self, request, context):
+        _require_grpc_api_key(context)
+        if _stt is None:
+            context.abort(grpc.StatusCode.UNAVAILABLE, "STT model not loaded")
+        language = (request.language or "").strip() or None
+        result = await _stt.transcribe(request.audio, language=language)
+        return TranscribeResponse(
+            text=result["text"],
+            language_detected=result.get("language_detected") or "",
+        )
+
+    async def TranscribeStream(self, request_iterator, context):
+        _require_grpc_api_key(context)
+        if _stt is None:
+            context.abort(grpc.StatusCode.UNAVAILABLE, "STT model not loaded")
+
+        import io
+        import time
+        import wave
+
+        audio_format = None
+        sample_rate = 16000
+        buf = bytearray()
+        last_emitted = ""
+        last_emit_ts = 0.0
+        logging.getLogger("uvicorn.error").info("STT gRPC stream started")
+
+        partial_min_seconds = settings.stt_partial_min_seconds
+        partial_interval_seconds = settings.stt_partial_interval_seconds
+        window_seconds = settings.stt_partial_window_seconds
+
+        def _to_wav_bytes(pcm_bytes: bytes, sr: int) -> bytes:
+            wav_buf = io.BytesIO()
+            with wave.open(wav_buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sr)
+                wf.writeframes(pcm_bytes)
+            return wav_buf.getvalue()
+
+        async def _emit_partial(pcm_bytes: bytes):
+            nonlocal last_emitted, last_emit_ts
+            if not pcm_bytes:
+                return
+            wav_bytes = _to_wav_bytes(pcm_bytes, sample_rate)
+            result = await _stt.transcribe(wav_bytes, language=None)
+            text = (result.get("text") or "").strip()
+            if not text or text == last_emitted:
+                return
+            last_emitted = text
+            last_emit_ts = time.monotonic()
+            yield TranscriptEvent(
+                text=text,
+                is_final=False,
+                language_detected=result.get("language_detected") or "",
+            )
+
+        async for msg in request_iterator:
+            if msg.sample_rate:
+                sample_rate = msg.sample_rate
+            if msg.format:
+                audio_format = msg.format
+            if msg.data:
+                buf.extend(msg.data)
+
+                if (audio_format or "").lower() in ("pcm16", "pcm_s16le", "s16le"):
+                    min_bytes = int(sample_rate * 2 * partial_min_seconds)
+                    if len(buf) >= min_bytes:
+                        now = time.monotonic()
+                        if now - last_emit_ts >= partial_interval_seconds:
+                            window_bytes = int(sample_rate * 2 * window_seconds)
+                            pcm_window = bytes(buf[-window_bytes:])
+                            async for ev in _emit_partial(pcm_window):
+                                yield ev
+
+            if msg.last:
+                break
+
+        audio_bytes = bytes(buf)
+        if not audio_bytes:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Empty audio stream")
+
+        if (audio_format or "").lower() in ("pcm16", "pcm_s16le", "s16le"):
+            audio_bytes = _to_wav_bytes(audio_bytes, sample_rate)
+
+        result = await _stt.transcribe(audio_bytes, language=None)
+        text = (result.get("text") or "").strip()
+        if text and text != last_emitted:
+            yield TranscriptEvent(
+                text=text,
+                is_final=False,
+                language_detected=result.get("language_detected") or "",
+            )
+
+        yield TranscriptEvent(
+            text=text,
+            is_final=True,
+            language_detected=result.get("language_detected") or "",
+        )
+        logging.getLogger("uvicorn.error").info("STT gRPC stream finished")
+
+    async def SynthesizeStream(self, request: SynthesizeRequest, context):
+        _require_grpc_api_key(context)
+        text = (request.text or "").strip()
+        if not text:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Empty text")
+
+        provider = (request.provider or "auto").strip()
+        language = (request.language or "es").strip()
+        output_format = (request.output_format or "mp3").strip()
+
+        voice_id = (request.voice_id or "").strip() or None
+        api_key = (request.api_key or "").strip() or None
+
+        if provider == "auto":
+            if language.startswith("qu"):
+                provider = "mms"
+            elif voice_id and api_key:
+                provider = "elevenlabs"
+            else:
+                provider = "polly"
+
+        async for chunk in _stream_with_provider(
+            text=text,
+            provider=provider,
+            language=language,
+            output_format=output_format,
+            voice_id=voice_id,
+            api_key=api_key,
+            sample_rate_override=None,
+        ):
+            if chunk:
+                yield AudioChunk(data=chunk, format=output_format, sample_rate=0, last=False)
+        yield AudioChunk(data=b"", format=output_format, sample_rate=0, last=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load models at startup, release at shutdown."""
-    global _tts, _stt, _elevenlabs, _polly, _minimax
+    global _tts, _stt, _elevenlabs, _polly, _minimax, _grpc_server
     logger.info("Loading speech models (this takes ~30s on first run)...")
 
     model_path = Path(settings.model_path)
@@ -105,7 +257,17 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to init MiniMax: {e}")
 
     logger.info("Speech models ready")
+    server = grpc.aio.server()
+    add_SpeechServiceServicer_to_server(_GrpcSpeechService(), server)
+    port = server.add_insecure_port("0.0.0.0:50051")
+    await server.start()
+    _grpc_server = server
+    logging.getLogger("uvicorn.error").info(f"gRPC server listening on 0.0.0.0:{port}")
     yield
+
+    if _grpc_server is not None:
+        await _grpc_server.stop(grace=0)
+        _grpc_server = None
 
     _tts = None
     _stt = None

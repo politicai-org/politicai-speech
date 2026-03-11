@@ -19,6 +19,10 @@ pydub>=0.25.1
 # Utilities
 python-dotenv>=1.0.0
 
+# gRPC (speech streaming)
+grpcio>=1.78.0
+protobuf>=6.31.0
+
 # Cloud Providers
 requests>=2.31.0
 boto3>=1.34.0

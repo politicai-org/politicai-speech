@@ -47,7 +47,6 @@ class WhisperSTTService:
             model=model_name,
             chunk_length_s=30,
             device="cpu",
-            cache_dir=cache_dir,
         )
         logger.info(f"Whisper STT model loaded: {model_name}")
 
