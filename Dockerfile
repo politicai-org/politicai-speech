@@ -42,7 +42,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_HOME=/app \
     PATH="/opt/venv/bin:$PATH" \
-    HF_HOME=/app/models
+    HF_HOME=/app/models \
+    TRANSFORMERS_CACHE=/app/models/hub \
+    HUGGINGFACE_HUB_CACHE=/app/models/hub
 
 WORKDIR $APP_HOME
 
@@ -63,6 +65,7 @@ COPY app/ ./app/
 # Create non-root user with home directory set to /app
 RUN addgroup --system speech && \
     adduser --system --group --home /app speech && \
+    mkdir -p /app/models/hub && \
     chown -R speech:speech $APP_HOME
 
 USER speech

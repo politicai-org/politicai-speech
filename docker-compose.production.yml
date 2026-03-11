@@ -9,6 +9,9 @@ services:
       - "8004:8004"
     environment:
       - MODEL_PATH=/app/models
+      - HF_HOME=/app/models
+      - TRANSFORMERS_CACHE=/app/models/hub
+      - HUGGINGFACE_HUB_CACHE=/app/models/hub
       - TTS_LANGUAGE=quz
       - TTS_MODEL_NAME=facebook/mms-tts-quz
       - STT_MODEL_NAME=openai/whisper-small
@@ -30,4 +33,3 @@ services:
 networks:
   app_candidato_network:
     external: true
-

@@ -11,7 +11,10 @@ All CPU inference runs in a thread executor — the event loop is never blocked.
 from __future__ import annotations
 
 import logging
+import importlib.util
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, AsyncGenerator
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, status
@@ -23,10 +26,9 @@ from .models import (
     HealthResponse,
     STTResponse,
     TTSRequest,
-    TTSResponse,
-    VoiceCloneRequest,
     VoiceCloneResponse,
 )
+from .services.providers import ElevenLabsProvider, MinimaxProvider, PollyProvider
 from .services.stt_service import WhisperSTTService
 from .services.tts_service import MmsTTSService
 
@@ -38,9 +40,6 @@ settings = get_settings()
 _tts: MmsTTSService | None = None
 _stt: WhisperSTTService | None = None
 
-
-from .services.providers import ElevenLabsProvider, MinimaxProvider, PollyProvider
-
 # ... (global providers)
 _elevenlabs: ElevenLabsProvider | None = None
 _polly: PollyProvider | None = None
@@ -51,6 +50,27 @@ async def lifespan(app: FastAPI):
     """Load models at startup, release at shutdown."""
     global _tts, _stt, _elevenlabs, _polly, _minimax
     logger.info("Loading speech models (this takes ~30s on first run)...")
+
+    model_path = Path(settings.model_path)
+    cache_path = Path(os.environ.get("TRANSFORMERS_CACHE", str(model_path / "hub")))
+    hf_home = Path(os.environ.get("HF_HOME", str(model_path)))
+
+    try:
+        model_path.mkdir(parents=True, exist_ok=True)
+        cache_path.mkdir(parents=True, exist_ok=True)
+        hf_home.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("HF_HOME", str(hf_home))
+        os.environ.setdefault("TRANSFORMERS_CACHE", str(cache_path))
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(cache_path))
+    except PermissionError:
+        fallback_base = Path("/tmp/hf-cache")
+        fallback_home = fallback_base / "home"
+        fallback_cache = fallback_base / "hub"
+        fallback_home.mkdir(parents=True, exist_ok=True)
+        fallback_cache.mkdir(parents=True, exist_ok=True)
+        os.environ["HF_HOME"] = str(fallback_home)
+        os.environ["TRANSFORMERS_CACHE"] = str(fallback_cache)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(fallback_cache)
 
     # Local models (heavy)
     _tts = MmsTTSService(
@@ -125,12 +145,7 @@ def _require_api_key(x_api_key: str | None) -> None:
 async def health() -> HealthResponse:
     import shutil
     ffmpeg_path = shutil.which("ffmpeg")
-    pydub_ok = False
-    try:
-        import pydub
-        pydub_ok = True
-    except ImportError:
-        pass
+    pydub_ok = importlib.util.find_spec("pydub") is not None
 
     return HealthResponse(
         status="ok",

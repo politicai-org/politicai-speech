@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import io
 from typing import Iterator
 import requests
 import boto3

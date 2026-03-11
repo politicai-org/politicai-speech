@@ -16,7 +16,6 @@ import asyncio
 import io
 import logging
 import os
-from functools import lru_cache
 
 import numpy as np
 import soundfile as sf
