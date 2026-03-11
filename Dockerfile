@@ -10,29 +10,31 @@ RUN apt-get update && apt-get install -y \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
 COPY requirements/ ./requirements/
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
     -r requirements/production.txt
 
 # Download models
 ARG TTS_MODEL=facebook/mms-tts-quz
 ARG STT_MODEL=openai/whisper-small
 ENV MODEL_PATH=/app/models
-ENV HF_HOME=/app/models
+ENV HF_HOME=/app/models \
+    TRANSFORMERS_CACHE=/app/models/hub \
+    HUGGINGFACE_HUB_CACHE=/app/models/hub
 
 RUN python -c "\
 from transformers import AutoTokenizer, VitsModel, WhisperProcessor, WhisperForConditionalGeneration; \
 print('Downloading TTS model...'); \
-AutoTokenizer.from_pretrained('${TTS_MODEL}', cache_dir='/app/models'); \
-VitsModel.from_pretrained('${TTS_MODEL}', cache_dir='/app/models'); \
+AutoTokenizer.from_pretrained('${TTS_MODEL}', cache_dir='/app/models/hub'); \
+VitsModel.from_pretrained('${TTS_MODEL}', cache_dir='/app/models/hub'); \
 print('Downloading STT model...'); \
-WhisperProcessor.from_pretrained('${STT_MODEL}', cache_dir='/app/models'); \
-WhisperForConditionalGeneration.from_pretrained('${STT_MODEL}', cache_dir='/app/models'); \
+WhisperProcessor.from_pretrained('${STT_MODEL}', cache_dir='/app/models/hub'); \
+WhisperForConditionalGeneration.from_pretrained('${STT_MODEL}', cache_dir='/app/models/hub'); \
 print('Models downloaded.')"
 
 # Stage 2: Runner
@@ -66,11 +68,8 @@ COPY app/ ./app/
 RUN addgroup --system speech && \
     adduser --system --group --home /app speech && \
     mkdir -p /app/models/hub && \
-    mkdir -p /tmp/hf-cache/home && \
-    mkdir -p /tmp/hf-cache/hub && \
     chown -R speech:speech $APP_HOME && \
-    chown -R speech:speech /app/models && \
-    chown -R speech:speech /tmp/hf-cache
+    chown -R speech:speech /app/models
 
 USER speech
 
