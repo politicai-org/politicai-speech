@@ -11,11 +11,14 @@ All CPU inference runs in a thread executor — the event loop is never blocked.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import importlib.util
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+import tempfile
+import subprocess
 from typing import Annotated, AsyncGenerator
 
 import grpc
@@ -318,6 +321,49 @@ async def health() -> HealthResponse:
         pydub_available=pydub_ok,
     )
 
+def _mp3_to_wav(mp3_bytes: bytes, sample_rate: int | None = None) -> bytes:
+    if not mp3_bytes:
+        return b""
+    try:
+        from pydub import AudioSegment  # type: ignore
+
+        seg = AudioSegment.from_file(io.BytesIO(mp3_bytes), format="mp3")
+        if sample_rate:
+            seg = seg.set_frame_rate(sample_rate)
+        seg = seg.set_channels(1)
+        out = io.BytesIO()
+        seg.export(out, format="wav")
+        return out.getvalue()
+    except Exception:
+        pass
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_in:
+        tmp_in.write(mp3_bytes)
+        tmp_in_path = tmp_in.name
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
+        tmp_out_path = tmp_out.name
+
+    try:
+        cmd = ["ffmpeg", "-y", "-i", tmp_in_path, "-ac", "1"]
+        if sample_rate:
+            cmd += ["-ar", str(sample_rate)]
+        cmd += ["-f", "wav", tmp_out_path]
+        result = subprocess.run(cmd, capture_output=True, timeout=20)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.decode(errors="replace")[:500])
+        with open(tmp_out_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp_in_path)
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp_out_path)
+        except Exception:
+            pass
+
 
 async def _synthesize_with_provider(
     text: str,
@@ -364,13 +410,21 @@ async def _synthesize_with_provider(
                 )
         
         audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
-        content_type = "audio/mpeg"
+        if output_format == "wav":
+            audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
+            content_type = "audio/wav"
+        else:
+            content_type = "audio/mpeg"
     
     elif provider == "polly":
         if _polly is None:
             raise HTTPException(status_code=503, detail="AWS Polly provider not configured")
         audio_bytes = _polly.synthesize(text, voice_id=voice_id)
-        content_type = "audio/mpeg"
+        if output_format == "wav":
+            audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
+            content_type = "audio/wav"
+        else:
+            content_type = "audio/mpeg"
     
     elif provider == "minimax":
         # Use local variable to avoid UnboundLocalError due to potential assignment
@@ -386,7 +440,11 @@ async def _synthesize_with_provider(
                 )
         
         audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
-        content_type = "audio/mpeg"
+        if output_format == "wav":
+            audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
+            content_type = "audio/wav"
+        else:
+            content_type = "audio/mpeg"
     
     else:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
@@ -408,7 +466,7 @@ async def _stream_with_provider(
     """
     global _elevenlabs, _minimax, _polly, _tts
     
-    if provider == "elevenlabs":
+    if provider == "elevenlabs" and output_format != "wav":
         # Use local variable to avoid UnboundLocalError due to potential assignment
         instance = _elevenlabs
         if instance is None:
@@ -528,10 +586,7 @@ async def text_to_speech_stream(
     # Pitch shift disabled for natural voice (consistency with /tts)
     sample_rate_override = None
     
-    # Determine content type
-    content_type = "audio/mpeg"
-    if provider == "mms" and request.output_format == "wav":
-        content_type = "audio/wav"
+    content_type = "audio/wav" if request.output_format == "wav" else "audio/mpeg"
 
     return StreamingResponse(
         _stream_with_provider(
