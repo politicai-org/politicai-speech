@@ -32,7 +32,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy via AWS SSM
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
           INSTANCE_ID="${{ secrets.ORBE_SPEECH_INSTANCE_ID }}"
           PROJECT_DIR="${{ env.PROJECT_DIR }}"
