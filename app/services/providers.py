@@ -84,7 +84,8 @@ class ElevenLabsProvider(TTSProvider):
                         error_text = await response.read()
                         raise RuntimeError(f"ElevenLabs stream error: {error_text.decode()}")
                     
-                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                    # Use 256 byte chunks for ultra-low latency streaming
+                    async for chunk in response.aiter_bytes(chunk_size=256):
                         if chunk:
                             yield chunk
             return
