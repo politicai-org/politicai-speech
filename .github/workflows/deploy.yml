@@ -88,10 +88,24 @@ jobs:
             echo '>>> Creating network if not exists...'
             sudo -u ubuntu docker network create app_candidato_network 2>/dev/null || true
 
-            echo '>>> Rebuilding Docker containers...'
+            # Detect if rebuild is needed (dependencies or Dockerfile changed)
+            echo '>>> Checking if rebuild is needed...'
             cd $PROJECT_DIR
-            # Build and Start
-            sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
+            NEEDS_REBUILD=false
+            if sudo -u ubuntu git diff HEAD@{1} HEAD --name-only | grep -E '^(requirements/|Dockerfile|docker-compose)'; then
+              echo 'Dependencies or Docker config changed - full rebuild required'
+              NEEDS_REBUILD=true
+            else
+              echo 'Only code changed - restart without rebuild (volume mounted)'
+            fi
+
+            if [ \"\$NEEDS_REBUILD\" = true ]; then
+              echo '>>> Rebuilding Docker containers...'
+              sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
+            else
+              echo '>>> Restarting containers (code auto-updated via volume mount)...'
+              sudo -u ubuntu docker compose -f docker-compose.production.yml restart
+            fi
             
             # Wait a bit and check health
             sleep 10

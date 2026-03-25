@@ -8,6 +8,9 @@ services:
     ports:
       - "8004:8004"
       - "50051:50051"  # gRPC port for streaming STT/TTS
+    volumes:
+      # Mount source code for hot-reload without rebuild
+      - ./app:/app/app:ro
     environment:
       - MODEL_PATH=/app/models
       - HF_HOME=/app/models
