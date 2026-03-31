@@ -42,7 +42,7 @@ class ElevenLabsProvider(TTSProvider):
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {
-                "stability": 0.5,
+                "stability": 0.8,
                 "similarity_boost": 0.75
             }
         }
@@ -75,7 +75,7 @@ class ElevenLabsProvider(TTSProvider):
             "text": text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {
-                "stability": 0.5,
+                "stability": 0.8,
                 "similarity_boost": 0.75
             }
         }
