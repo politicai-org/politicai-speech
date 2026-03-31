@@ -178,6 +178,8 @@ class _GrpcSpeechService(SpeechServiceServicer):
 
         voice_id = (request.voice_id or "").strip() or None
         api_key = (request.api_key or "").strip() or None
+        
+        logger.info(f"[gRPC] SynthesizeStream: text='{text[:20]}...', provider={provider}, format={output_format}, voice={voice_id}")
 
         if provider == "auto":
             if language.startswith("qu"):
