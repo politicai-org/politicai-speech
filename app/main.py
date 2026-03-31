@@ -409,20 +409,28 @@ async def _synthesize_with_provider(
                     detail="ElevenLabs provider not configured globally and no key provided"
                 )
         
-        audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
+        audio_bytes = instance.synthesize(
+            text, voice_id=voice_id, api_key=api_key, output_format=output_format
+        )
         if output_format == "wav":
             audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
             content_type = "audio/wav"
+        elif output_format == "pcm":
+            content_type = "audio/l16;rate=16000"
         else:
             content_type = "audio/mpeg"
     
     elif provider == "polly":
         if _polly is None:
             raise HTTPException(status_code=503, detail="AWS Polly provider not configured")
-        audio_bytes = _polly.synthesize(text, voice_id=voice_id)
+        audio_bytes = _polly.synthesize(
+            text, voice_id=voice_id, output_format=output_format
+        )
         if output_format == "wav":
             audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
             content_type = "audio/wav"
+        elif output_format == "pcm":
+            content_type = "audio/l16;rate=16000"
         else:
             content_type = "audio/mpeg"
     
@@ -439,10 +447,14 @@ async def _synthesize_with_provider(
                     detail="MiniMax provider not configured globally and no key provided"
                 )
         
-        audio_bytes = instance.synthesize(text, voice_id=voice_id, api_key=api_key)
+        audio_bytes = instance.synthesize(
+            text, voice_id=voice_id, api_key=api_key, output_format=output_format
+        )
         if output_format == "wav":
             audio_bytes = _mp3_to_wav(audio_bytes, sample_rate=sample_rate_override)
             content_type = "audio/wav"
+        elif output_format == "pcm":
+            content_type = "audio/l16;rate=16000"
         else:
             content_type = "audio/mpeg"
     
@@ -480,7 +492,9 @@ async def _stream_with_provider(
                 )
         
         # Use the true streaming method
-        async for chunk in instance.synthesize_stream(text, voice_id=voice_id, api_key=api_key):
+        async for chunk in instance.synthesize_stream(
+            text, voice_id=voice_id, api_key=api_key, output_format=output_format
+        ):
             yield chunk
             
     else:
@@ -586,7 +600,12 @@ async def text_to_speech_stream(
     # Pitch shift disabled for natural voice (consistency with /tts)
     sample_rate_override = None
     
-    content_type = "audio/wav" if request.output_format == "wav" else "audio/mpeg"
+    if request.output_format == "wav":
+        content_type = "audio/wav"
+    elif request.output_format == "pcm":
+        content_type = "audio/l16;rate=16000"
+    else:
+        content_type = "audio/mpeg"
 
     return StreamingResponse(
         _stream_with_provider(
