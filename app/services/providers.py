@@ -11,16 +11,16 @@ class TTSProvider(ABC):
     """Abstract base class for TTS providers."""
     
     @abstractmethod
-    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
+    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> bytes:
         pass
 
-    def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
+    def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> Iterator[bytes]:
         """Default implementation: synthesize full audio and yield it in one chunk.
         Override this for true streaming."""
-        yield self.synthesize(text, voice_id, api_key)
+        yield self.synthesize(text, voice_id, api_key, output_format)
 
 class ElevenLabsProvider(TTSProvider):
-    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
+    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> bytes:
         vid = voice_id or settings.elevenlabs_voice_id
         if not vid:
             raise ValueError("voice_id is required for ElevenLabs TTS")
@@ -31,6 +31,9 @@ class ElevenLabsProvider(TTSProvider):
             raise ValueError("ElevenLabs API key not configured (neither global nor per-request)")
             
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
+        if output_format == "pcm":
+            url += "?output_format=pcm_16000"
+            
         headers = {
             "xi-api-key": key,
             "Content-Type": "application/json"
@@ -50,7 +53,7 @@ class ElevenLabsProvider(TTSProvider):
             
         return response.content
 
-    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> Iterator[bytes]:
+    async def synthesize_stream(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> Iterator[bytes]:
         """Async generator for streaming audio."""
         vid = voice_id or settings.elevenlabs_voice_id
         if not vid:
@@ -61,6 +64,8 @@ class ElevenLabsProvider(TTSProvider):
             raise ValueError("ElevenLabs API key not configured")
             
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}/stream"
+        if output_format == "pcm":
+            url += "?output_format=pcm_16000"
         
         headers = {
             "xi-api-key": key,
@@ -117,20 +122,24 @@ class PollyProvider(TTSProvider):
             
         self.client = boto3.client(**client_kwargs)
 
-    def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
+    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> bytes:
         vid = voice_id or "Lupe" # Default Spanish voice
         
         text_type = "text"
         if text.strip().startswith("<speak>"):
             text_type = "ssml"
 
-        response = self.client.synthesize_speech(
-            Text=text,
-            OutputFormat="mp3",
-            VoiceId=vid,
-            Engine="neural",
-            TextType=text_type
-        )
+        kwargs = {
+            "Text": text,
+            "OutputFormat": "pcm" if output_format == "pcm" else "mp3",
+            "VoiceId": vid,
+            "Engine": "neural",
+            "TextType": text_type
+        }
+        if output_format == "pcm":
+            kwargs["SampleRate"] = "16000"
+
+        response = self.client.synthesize_speech(**kwargs)
         
         if "AudioStream" in response:
             with closing(response["AudioStream"]) as stream:
@@ -143,7 +152,7 @@ class MmsProvider(TTSProvider):
     def __init__(self, mms_service):
         self.service = mms_service
         
-    def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
+    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> bytes:
         # MMS service returns wav bytes directly
         # Note: MMS service implementation details might need adjustment to match interface
         return self.service.synthesize(text)
@@ -151,7 +160,7 @@ class MmsProvider(TTSProvider):
 class MinimaxProvider(TTSProvider):
     """MiniMax TTS provider with voice cloning support."""
     
-    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None) -> bytes:
+    def synthesize(self, text: str, voice_id: str | None = None, api_key: str | None = None, output_format: str = "mp3") -> bytes:
         key = api_key or settings.minimax_api_key
         group_id = settings.minimax_group_id
         
