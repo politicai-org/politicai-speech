@@ -84,34 +84,58 @@ jobs:
             # Clean up before building to free up space/memory
             echo '>>> Cleaning up old Docker resources...'
             sudo -u ubuntu docker system prune -f --volumes || true
-
+ 
             echo '>>> Creating network if not exists...'
             sudo -u ubuntu docker network create app_candidato_network 2>/dev/null || true
-
-            # Detect if rebuild is needed (dependencies or Dockerfile changed)
-            echo '>>> Checking if rebuild is needed...'
+ 
+            echo '>>> Rebuilding and starting Docker containers...'
             cd $PROJECT_DIR
-            NEEDS_REBUILD=false
-            if sudo -u ubuntu git diff HEAD@{1} HEAD --name-only | grep -E '^(requirements/|Dockerfile|docker-compose)'; then
-              echo 'Dependencies or Docker config changed - full rebuild required'
-              NEEDS_REBUILD=true
-            else
-              echo 'Only code changed - restart without rebuild (volume mounted)'
+            sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
+ 
+            # Wait for health status
+            echo '>>> Waiting for container to be healthy...'
+            MAX_RETRIES=24
+            RETRY_COUNT=0
+            HEALTH_STATUS=\"starting\"
+ 
+            while [ \$RETRY_COUNT -lt \$MAX_RETRIES ]; do
+              # We check by container name defined in docker-compose.production.yml
+              CONTAINER_NAME=\"candidato_orbe_speech\"
+              HEALTH_STATUS=\$(sudo -u ubuntu docker inspect --format='{{.State.Health.Status}}' \$CONTAINER_NAME 2>/dev/null || echo \"not-found\")
+              RUNNING=\$(sudo -u ubuntu docker inspect --format='{{.State.Running}}' \$CONTAINER_NAME 2>/dev/null || echo \"false\")
+ 
+              echo \"Status: \$HEALTH_STATUS (Running: \$RUNNING)\"
+ 
+              if [ \"\$HEALTH_STATUS\" == \"healthy\" ]; then
+                echo \"✅ Container is healthy!\"
+                break
+              fi
+ 
+              if [ \"\$HEALTH_STATUS\" == \"unhealthy\" ]; then
+                echo \"❌ Container is UNHEALTHY. Fetching logs...\"
+                sudo -u ubuntu docker logs \$CONTAINER_NAME | tail -n 100
+                exit 1
+              fi
+ 
+              if [ \"\$RUNNING\" != \"true\" ]; then
+                # On first run or heavy pull, it might take a few seconds to start
+                if [ \$RETRY_COUNT -gt 5 ]; then
+                  echo \"❌ Container is NOT RUNNING. Fetching logs...\"
+                  sudo -u ubuntu docker logs \$CONTAINER_NAME | tail -n 100
+                  exit 1
+                fi
+              fi
+ 
+              RETRY_COUNT=\$((RETRY_COUNT+1))
+              sleep 10
+            done
+ 
+            if [ \"\$HEALTH_STATUS\" != \"healthy\" ]; then
+              echo \"❌ Timeout: Container did not become healthy within 240 seconds.\"
+              sudo -u ubuntu docker logs candidato_orbe_speech | tail -n 100
+              exit 1
             fi
-
-            if [ \"\$NEEDS_REBUILD\" = true ]; then
-              echo '>>> Rebuilding Docker containers...'
-              sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
-            else
-              echo '>>> Restarting containers (code auto-updated via volume mount)...'
-              sudo -u ubuntu docker compose -f docker-compose.production.yml restart
-            fi
-            
-            # Wait a bit and check health
-            sleep 10
-            echo '>>> Checking container status...'
-            sudo -u ubuntu docker compose -f docker-compose.production.yml ps | grep orbe-speech || echo 'WARNING: Container might not be running'
-            
+ 
             sudo -u ubuntu docker image prune -f
             echo '>>> Deployment complete!'
           "
