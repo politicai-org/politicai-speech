@@ -600,6 +600,8 @@ async def text_to_speech_stream(
     # Pitch shift disabled for natural voice (consistency with /tts)
     sample_rate_override = None
     
+    logger.info(f"TTS Streaming Request: provider={provider}, format={request.output_format}, voice={request.voice_id}")
+    
     if request.output_format == "wav":
         content_type = "audio/wav"
     elif request.output_format == "pcm":
