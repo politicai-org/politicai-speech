@@ -121,8 +121,13 @@ jobs:
               sudo docker-compose -f docker-compose.production.yml up -d --build --remove-orphans
             else
               echo '>>> Updating code on host and restarting service...'
-              # git reset was already done, now we just need the container to reload the volume
-              sudo docker-compose -f docker-compose.production.yml restart
+              # Si no hay contenedores creados aún, arrancar en vez de reiniciar
+              if [ -z \"\$(sudo docker-compose -f docker-compose.production.yml ps -q)\" ]; then
+                echo 'No containers found - starting services...'
+                sudo docker-compose -f docker-compose.production.yml up -d --build --remove-orphans
+              else
+                sudo docker-compose -f docker-compose.production.yml restart
+              fi
             fi
 
             # Wait for health status
