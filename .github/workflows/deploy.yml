@@ -43,17 +43,34 @@ jobs:
           COMMAND="
             set -e
             
+            # Ensure base tools
+            if ! command -v aws >/dev/null 2>&1; then
+              sudo DEBIAN_FRONTEND=noninteractive apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y awscli
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo DEBIAN_FRONTEND=noninteractive apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose git jq
+              sudo systemctl enable --now docker || true
+              sudo usermod -aG docker ubuntu || true
+            fi
+            
             echo '>>> Configuring SSH access...'
             sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
             sudo -u ubuntu chmod 700 /home/ubuntu/.ssh
-            
-            # Recuperar la clave y asegurar permisos correctos
-            aws secretsmanager get-secret-value --region us-east-1 --secret-id $SECRET_NAME --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa > /dev/null
+            # Recuperar la clave (normalizar EOL y asegurar newline final)
+            aws secretsmanager get-secret-value --region us-east-1 --secret-id $SECRET_NAME --query SecretString --output text | sudo -u ubuntu tee /home/ubuntu/.ssh/id_rsa.tmp > /dev/null
+            sudo -u ubuntu /bin/sh -c \"tr -d '\r' < /home/ubuntu/.ssh/id_rsa.tmp > /home/ubuntu/.ssh/id_rsa\"
+            sudo -u ubuntu /bin/sh -c \"printf '\n' >> /home/ubuntu/.ssh/id_rsa\"
+            sudo rm -f /home/ubuntu/.ssh/id_rsa.tmp
             sudo -u ubuntu chmod 600 /home/ubuntu/.ssh/id_rsa
+            sudo chown -R ubuntu:ubuntu /home/ubuntu/.ssh
             
             # Probar conexión a GitHub
             echo '>>> Testing GitHub connection...'
-            sudo -u ubuntu ssh-keyscan -t rsa github.com >> /home/ubuntu/.ssh/known_hosts 2>/dev/null || true
+            sudo touch /home/ubuntu/.ssh/known_hosts
+            sudo chown ubuntu:ubuntu /home/ubuntu/.ssh/known_hosts
+            sudo -u ubuntu ssh-keyscan -H -t rsa github.com | sudo -u ubuntu tee -a /home/ubuntu/.ssh/known_hosts >/dev/null || true
             sudo -u ubuntu ssh -o StrictHostKeyChecking=no -T git@github.com || true
 
             if [ ! -d $PROJECT_DIR ]; then
@@ -83,10 +100,10 @@ jobs:
 
             # Clean up before building to free up space/memory
             echo '>>> Cleaning up old Docker resources...'
-            sudo -u ubuntu docker system prune -f --volumes || true
+            sudo docker system prune -f --volumes || true
  
             echo '>>> Creating network if not exists...'
-            sudo -u ubuntu docker network create app_candidato_network 2>/dev/null || true
+            sudo docker network create app_candidato_network 2>/dev/null || true
             # Detect if rebuild is needed (dependencies or Dockerfile changed)
             echo '>>> Checking if rebuild is needed...'
             cd $PROJECT_DIR
@@ -101,11 +118,11 @@ jobs:
 
             if [ \"$NEEDS_REBUILD\" = true ]; then
               echo '>>> Rebuilding and starting Docker containers...'
-              sudo -u ubuntu docker compose -f docker-compose.production.yml up -d --build --remove-orphans
+              sudo docker-compose -f docker-compose.production.yml up -d --build --remove-orphans
             else
               echo '>>> Updating code on host and restarting service...'
               # git reset was already done, now we just need the container to reload the volume
-              sudo -u ubuntu docker compose -f docker-compose.production.yml restart
+              sudo docker-compose -f docker-compose.production.yml restart
             fi
 
             # Wait for health status
@@ -116,8 +133,8 @@ jobs:
 
             while [ \$RETRY_COUNT -lt \$MAX_RETRIES ]; do
               CONTAINER_NAME=\"candidato_orbe_speech\"
-              HEALTH_STATUS=\$(sudo -u ubuntu docker inspect --format='{{.State.Health.Status}}' \$CONTAINER_NAME 2>/dev/null || echo \"not-found\")
-              RUNNING=\$(sudo -u ubuntu docker inspect --format='{{.State.Running}}' \$CONTAINER_NAME 2>/dev/null || echo \"false\")
+              HEALTH_STATUS=\$(sudo docker inspect --format='{{.State.Health.Status}}' \$CONTAINER_NAME 2>/dev/null || echo \"not-found\")
+              RUNNING=\$(sudo docker inspect --format='{{.State.Running}}' \$CONTAINER_NAME 2>/dev/null || echo \"false\")
 
               echo \"Status: \$HEALTH_STATUS (Running: \$RUNNING)\"
 
@@ -128,14 +145,14 @@ jobs:
 
               if [ \"\$HEALTH_STATUS\" == \"unhealthy\" ]; then
                 echo \"❌ Container is UNHEALTHY. Fetching logs...\"
-                sudo -u ubuntu docker logs \$CONTAINER_NAME | tail -n 100
+                sudo docker logs \$CONTAINER_NAME | tail -n 100
                 exit 1
               fi
 
               if [ \"\$RUNNING\" != \"true\" ]; then
                 if [ \$RETRY_COUNT -gt 5 ]; then
                   echo \"❌ Container is NOT RUNNING. Fetching logs...\"
-                  sudo -u ubuntu docker logs \$CONTAINER_NAME | tail -n 100
+                  sudo docker logs \$CONTAINER_NAME | tail -n 100
                   exit 1
                 fi
               fi
@@ -146,11 +163,11 @@ jobs:
 
             if [ \"\$HEALTH_STATUS\" != \"healthy\" ]; then
               echo \"❌ Timeout: Container did not become healthy within 240 seconds.\"
-              sudo -u ubuntu docker logs candidato_orbe_speech | tail -n 100
+              sudo docker logs candidato_orbe_speech | tail -n 100
               exit 1
             fi
 
-            sudo -u ubuntu docker image prune -f
+            sudo docker image prune -f
             echo '>>> Deployment complete!'
           "
 
