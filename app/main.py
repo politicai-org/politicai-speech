@@ -1,8 +1,8 @@
 """
-orbe-speech — Specialized speech microservice.
+politicai-speech — Specialized speech microservice.
 
 Provides native Quechua TTS (facebook/mms-tts-quz) and multilingual STT
-(openai/whisper-small) as HTTP endpoints consumed by the orbe AI microservice.
+(openai/whisper-small) as HTTP endpoints consumed by the PoliticAI platform.
 
 Models are loaded once at startup via FastAPI lifespan and held as singletons.
 All CPU inference runs in a thread executor — the event loop is never blocked.
@@ -282,9 +282,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="orbe-speech",
+    title="politicai-speech",
     version=settings.version,
-    description="Native Quechua TTS + multilingual STT for the orbe AI platform",
+    description="Native Quechua TTS + multilingual STT for the PoliticAI platform",
     lifespan=lifespan,
 )
 

@@ -1,6 +1,6 @@
-# orbe-speech
+# politicai-speech
 
-Specialized speech microservice providing **native Quechua TTS** and multilingual STT for the orbe AI platform.
+Specialized speech microservice providing **native Quechua TTS** and multilingual STT for the PoliticAI platform.
 
 ## Why a separate service?
 
@@ -55,25 +55,25 @@ curl -X POST http://localhost:8004/stt \
   -F "language=qu"
 ```
 
-## Integration with orbe
+## Integration with PoliticAI
 
-Set these env vars in orbe:
+Set these env vars in your PoliticAI service:
 ```bash
-HF_SPEECH_URL=http://orbe-speech:8004   # Docker Compose
-HF_SPEECH_API_KEY=speech-dev-key-2024
+SPEECH_URL=http://politicai-speech:8004   # Docker Compose
+SPEECH_API_KEY=speech-dev-key-2024
 ```
 
-When `HF_SPEECH_URL` is set, the `candidate` voice profile automatically routes `language=qu` requests to this service via `facebook/mms-tts-quz`.
+When `SPEECH_URL` is set, the speech service automatically routes `language=qu` requests to this service via `facebook/mms-tts-quz`.
 
 ## Extending to other languages
 
 To add another MMS language (e.g. Aymara `ayr`):
 
 1. Deploy a second instance with `TTS_MODEL_NAME=facebook/mms-tts-ayr` and `TTS_LANGUAGE=ayr`
-2. Register a new `HuggingFaceSpeechProvider` in orbe pointing to the new URL
-3. Add `"ayr": VoiceConfig(provider="hf-speech-ayr", voice_id="ayr", language_code="ayr")` to the voice profile overrides
+2. Register a new speech provider in PoliticAI pointing to the new URL
+3. Add `"ayr": VoiceConfig(provider="politicai-speech-ayr", voice_id="ayr", language_code="ayr")` to the voice profile overrides
 
-No code changes required in orbe's core TTS logic.
+No code changes required in PoliticAI's core TTS logic.
 
 ## Resource Requirements (ECS Fargate)
 
