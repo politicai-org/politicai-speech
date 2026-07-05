@@ -4,14 +4,14 @@ Specialized speech microservice providing **native Quechua TTS** and multilingua
 
 ## Why a separate service?
 
-| Concern | orbe | orbe-speech |
-|---------|------|-------------|
+| Concern | PoliticAI Core | politicai-speech |
+|---------|---|---|
 | Runtime | Async I/O (FastAPI) | CPU-bound inference (PyTorch) |
 | Memory | ~512 MB | ~4 GB (models + inference) |
-| Scaling | Scale with chat load | Scale with TTS/STT request volume |
+| Scaling | Scale with API load | Scale with TTS/STT request volume |
 | Dependencies | Zero ML libs | PyTorch, Transformers, soundfile |
 
-Separating CPU-bound inference from the async orbe service avoids event-loop blocking and allows independent scaling and resource allocation.
+Separating CPU-bound inference from the async PoliticAI service avoids event-loop blocking and allows independent scaling and resource allocation.
 
 ## Models
 
