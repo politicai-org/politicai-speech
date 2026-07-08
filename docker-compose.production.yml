@@ -3,14 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: candidato_orbe_speech
-    restart: unless-stopped
+    container_name: candidato_orbe_speech_prod
     ports:
       - "8004:8004"
-      - "50051:50051"  # gRPC port for streaming STT/TTS
-    volumes:
-      # Mount source code for hot-reload without rebuild
-      - ./app:/app/app:ro
     environment:
       - MODEL_PATH=/app/models
       - HF_HOME=/app/models
@@ -21,13 +16,7 @@ services:
       - STT_MODEL_NAME=openai/whisper-small
       - TTS_MAX_CHARS=1000
       - API_KEY=${SPEECH_API_KEY:-speech-dev-key-2024}
-      # Optimized STT configuration for low latency
-      - STT_PARTIAL_MIN_SECONDS=0.8
-      - STT_PARTIAL_INTERVAL_SECONDS=1.0
-      - STT_PARTIAL_WINDOW_SECONDS=3.0
-      - ELEVENLABS_API_KEY=bbc453049576009dabfb2ad3bbc017207f3672fd36a17974af8296412dfd6cf9
-      - ELEVENLABS_VOICE_ID=KYje4wjxhegtDJdiNIgP
-      - CORS_ORIGINS=["*"]
+      - CORS_ORIGINS=["http://localhost:8003", "http://localhost:5173", "http://localhost:3000"]
       - LOG_LEVEL=INFO
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
@@ -36,8 +25,8 @@ services:
       retries: 3
       start_period: 120s
     networks:
-      - app_candidato_network
+      - candidato_network
 
 networks:
-  app_candidato_network:
+  candidato_network:
     external: true
