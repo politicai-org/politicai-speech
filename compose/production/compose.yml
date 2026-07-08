@@ -1,0 +1,22 @@
+services:
+  orbe-speech:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: politicai-speech-prod
+    ports:
+      - "8004:8004"
+    env_file: ./.env
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - candidato_network
+
+networks:
+  candidato_network:
+    external: true

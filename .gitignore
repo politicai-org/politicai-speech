@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .env
+compose/local/.env
+compose/production/.env
 .venv/
 venv/
 *.egg-info/
