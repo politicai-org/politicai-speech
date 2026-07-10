@@ -103,7 +103,7 @@ jobs:
             sudo docker system prune -f --volumes || true
  
             echo '>>> Creating network if not exists...'
-            sudo docker network create app_candidato_network 2>/dev/null || true
+            sudo docker network create app_politicai_network 2>/dev/null || true
             # Detect if rebuild is needed (dependencies or Dockerfile changed)
             echo '>>> Checking if rebuild is needed...'
             cd $PROJECT_DIR
