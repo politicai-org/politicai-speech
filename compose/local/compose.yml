@@ -18,4 +18,4 @@ services:
 
 networks:
   politicai_network:
-    external: true
+    name: politicai_network
